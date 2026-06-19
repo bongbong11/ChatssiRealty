@@ -9,10 +9,25 @@ export const INFO_BLOCK_GUARD = `
 그 블록의 형식, 수치, 표현을 출력에 절대 반영하지 말 것.
 `.trim();
 
-export function buildWorldClassifyPrompt(_unused, userHint) {
+export const BREAK_CHARACTER_GUARD = `
+⚠ 이것은 캐릭터 롤플레이 응답이 아니라 데이터 생성 요청이다. 캐릭터의 말투나 1인칭/대사,
+행동 묘사로 절대 답하지 말 것. 캐릭터를 연기하지 말고, 오직 요청된 데이터 형식으로만 응답할 것.
+서두/맺음말, 설명, 캐릭터 이름표(예: "OOO:") 없이 곧바로 데이터부터 시작할 것.
+`.trim();
+
+// lang: 'ko' | 'en' — 구조(JSON key 등)는 그대로, 텍스트 내용만 해당 언어로 작성
+function langInstruction(lang) {
+  return lang === 'en'
+    ? '⚠ Write all generated text content in English. Do not mix languages.'
+    : '⚠ 생성되는 모든 텍스트 내용은 한국어로 작성할 것. 언어를 섞지 말 것.';
+}
+
+export function buildWorldClassifyPrompt(_unused, userHint, lang = 'ko') {
   return `
 역할: 캐릭터 데이터 분석가.
 ${INFO_BLOCK_GUARD}
+${BREAK_CHARACTER_GUARD}
+${langInstruction(lang)}
 
 지금 이 대화의 캐릭터시트, 페르소나, 로어북, 최근 대화 내용을 참고하라.
 유저가 적은 참고 텍스트: "${userHint || "(없음)"}"
@@ -37,10 +52,12 @@ MAJOR_IP인데 세부 시리즈가 여러 개로 갈리는 경우(예: 콜오브
 `.trim();
 }
 
-export function buildAddressGeneratePrompt(_unused, worldClass, userHint) {
+export function buildAddressGeneratePrompt(_unused, worldClass, userHint, lang = 'ko') {
   return `
 역할: 부동산 정보 생성기.
 ${INFO_BLOCK_GUARD}
+${BREAK_CHARACTER_GUARD}
+${langInstruction(lang)}
 
 지금 이 대화의 캐릭터시트, 페르소나, 로어북, 최근 대화 내용을 참고해서
 캐릭터의 재산수준/직업/거주국가를 추정하라.
@@ -78,10 +95,12 @@ ${INFO_BLOCK_GUARD}
 `.trim();
 }
 
-export function buildHouseMovePrompt(_unused, worldClass, prevCard) {
+export function buildHouseMovePrompt(_unused, worldClass, prevCard, lang = 'ko') {
   return `
 역할: 거주지 재생성기. ("이사가기" 버튼 클릭시에만 호출 — 자동감지 없음)
 ${INFO_BLOCK_GUARD}
+${BREAK_CHARACTER_GUARD}
+${langInstruction(lang)}
 
 지금 이 대화의 캐릭터시트, 페르소나, 로어북, 최근 대화 내용(특히 이사/매매전환/리모델링
 등 거주 관련 변화가 언급됐는지)을 참고하라.
@@ -97,10 +116,12 @@ ${INFO_BLOCK_GUARD}
 `.trim();
 }
 
-export function buildItemPoolPrompt(_unused, worldClass, spaceKey, spaceLabel) {
+export function buildItemPoolPrompt(_unused, worldClass, spaceKey, spaceLabel, lang = 'ko') {
   return `
 역할: 소지품 인벤토리 생성기.
 ${INFO_BLOCK_GUARD}
+${BREAK_CHARACTER_GUARD}
+${langInstruction(lang)}
 
 지금 이 대화의 캐릭터시트, 페르소나, 로어북, 최근 대화 내용을 참고하라.
 
@@ -138,11 +159,13 @@ ${INFO_BLOCK_GUARD}
 `.trim();
 }
 
-export function buildFoodListPrompt(_unused, worldClass, subtype) {
+export function buildFoodListPrompt(_unused, worldClass, subtype, lang = 'ko') {
   // subtype: 'pantry' | 'fridge'
   return `
 역할: 식료품 목록 생성기.
 ${INFO_BLOCK_GUARD}
+${BREAK_CHARACTER_GUARD}
+${langInstruction(lang)}
 
 지금 이 대화의 캐릭터시트, 페르소나, 로어북, 최근 대화 내용을 참고하라.
 
@@ -161,10 +184,12 @@ ${INFO_BLOCK_GUARD}
 `.trim();
 }
 
-export function buildLorebookExportPrompt(card) {
+export function buildLorebookExportPrompt(card, lang = 'ko') {
   return `
 역할: 로어북 엔트리 작성기.
+${BREAK_CHARACTER_GUARD}
 입력 카드 데이터: ${JSON.stringify(card)}
+${langInstruction(lang)}
 
 작업: 카드의 모든 항목을 카테고리별로 묶어서 자연스러운 줄글 문단으로 변환하라.
   카테고리 구성(고정):
