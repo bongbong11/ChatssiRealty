@@ -17,8 +17,8 @@ import {
 const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
 const BASE_POINTS = 50;
-const REFILL_INTERVAL_MS = 60 * 60 * 1000; // 1시간
-const REFILL_AMOUNT = 1;
+const REFILL_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3시간
+const REFILL_AMOUNT = 10;
 const ITEM_CAP = 12;
 
 const SPACES = [
@@ -49,6 +49,9 @@ const defaultSettings = {
     points: 0,
     lifetimePoints: 0,
     lastRefillAt: 0,
+    selectedProfileName: null,
+    maxTokens: 4000,
+    outputLanguage: 'ko', // 'ko' | 'en'
     perChar: {}, // { [charKey]: { house:{current,history}, spaces:{key:[..]}, pantry:[], fridge:[] } }
 };
 
@@ -124,42 +127,101 @@ function spendPoints(amount) {
     checkRefill();
     const s = getSettings();
     if (s.points >= amount) { s.points -= amount; save(); return true; }
-    // 합산 표시는 챗틀로얄 포인트를 포함하지만, 실제 차감은 자체 포인트에서만 처리
-    // (다른 확장의 저장 데이터를 직접 수정하는 건 위험 요소라 보류 — 추후 정식 연동 API 생기면 교체)
-    toastr.warning('자체 포인트가 부족해요 (합산 포인트는 표시용, 차감은 자체 포인트에서만 가능)');
+    toastr.warning('자체 포인트가 부족해요. 챗틀로얄 포인트가 있다면 설정에서 동기화해보세요.');
     return false;
 }
+// 챗틀로얄 포인트를 자체 포인트로 가져오기 (동기화 — 챗틀로얄 쪽 포인트는 그만큼 차감됨)
+function syncChatleRoyalPoints() {
+    const ctx = SillyTavern.getContext();
+    const cr = ctx.extensionSettings?.[CHATLEROYAL_KEY];
+    const amount = (cr && typeof cr.points === 'number') ? cr.points : 0;
+    if (amount <= 0) { toastr.info('가져올 챗틀로얄 포인트가 없어요'); return 0; }
+    const s = getSettings();
+    s.points += amount;
+    s.lifetimePoints += amount;
+    cr.points = 0;
+    save();
+    toastr.success(`챗틀로얄에서 ${amount}P 가져왔어요!`);
+    return amount;
+}
 
-// ─── AI 호출 (챗씨부인 방식 그대로 — generateQuietPrompt) ───
+// ─── AI 호출 ────────────────────────────────
+// 프로필 선택 시: 직접 모은 컨텍스트(캐릭터시트/페르소나/최근 챗) + 프롬프트를 ConnectionManager로 전송
+// 프로필 미선택 시: generateQuietPrompt로 ST가 로어북/AN/챗을 자동으로 섞어서 생성 (현재 연결 사용)
+function buildManualContext() {
+    const ctx = SillyTavern.getContext();
+    const char = ctx.characters?.[ctx.characterId];
+    const charDesc = [char?.description, char?.personality, char?.scenario].filter(Boolean).join('\n').slice(0, 1200);
+    const personaName = ctx.name1 || '';
+    const personaDesc = (ctx.powerUserSettings?.persona_description || '').slice(0, 500);
+    const recentChat = (ctx.chat || []).slice(-15).map((m) => `${m.is_user ? (personaName || '유저') : (char?.name || 'AI')}: ${m.mes}`).join('\n').slice(0, 3000);
+    return [
+        charDesc ? `[캐릭터 시트]\n${charDesc}` : '',
+        personaDesc ? `[페르소나: ${personaName}]\n${personaDesc}` : '',
+        recentChat ? `[최근 대화]\n${recentChat}` : '',
+    ].filter(Boolean).join('\n\n');
+}
 async function callAI(prompt) {
     const ctx = SillyTavern.getContext();
+    const s = getSettings();
+    const profileName = s.selectedProfileName;
+
+    if (profileName && ctx.ConnectionManagerRequestService) {
+        const profiles = ctx.extensionSettings?.['connectionManager']?.profiles || [];
+        const profile = profiles.find((p) => p.name === profileName);
+        if (profile) {
+            const context = buildManualContext();
+            const content = context ? `${context}\n\n${prompt}` : prompt;
+            const response = await ctx.ConnectionManagerRequestService.sendRequest(
+                profile.id, [{ role: 'user', content }], s.maxTokens || 4000,
+                { stream: false, extractData: true, includePreset: true, includeInstruct: false },
+            );
+            let raw = '';
+            if (typeof response === 'string') raw = response;
+            else if (typeof response?.content === 'string') raw = response.content;
+            else if (response?.choices?.[0]?.message?.content) raw = response.choices[0].message.content;
+            else if (response?.content?.[0]?.text) raw = response.content[0].text;
+            return filterPhoneTrigger(raw);
+        }
+    }
+
+    // 프로필 미선택 — 현재 연결 + ST 자동 컨텍스트(로어북/AN/챗)
     const result = await ctx.generateQuietPrompt({
         quietPrompt: prompt,
         quietToLoud: true,
-        skipWIAN: false, // 로어북/Author's Note 포함
+        skipWIAN: false,
     });
     return filterPhoneTrigger(result || '');
 }
 function parseJSON(raw) {
+    if (!raw) { console.warn(`[${MODULE_NAME}] AI 응답이 비어있음`); return null; }
+    const cleaned = String(raw).replace(/```json|```/g, '').trim();
     try {
-        return JSON.parse(String(raw).replace(/```json|```/g, '').trim());
+        return JSON.parse(cleaned);
     } catch (e) {
-        console.error(`[${MODULE_NAME}] JSON 파싱 실패:`, e, raw);
+        // 모델이 캐릭터 말투로 응답하면서 JSON 앞뒤에 다른 텍스트를 붙였을 수 있음 — 본문 중 JSON만 추출 시도
+        const match = cleaned.match(/\{[\s\S]*\}/) || cleaned.match(/\[[\s\S]*\]/);
+        if (match) {
+            try { return JSON.parse(match[0]); } catch (e2) { /* 그래도 실패 */ }
+        }
+        console.error(`[${MODULE_NAME}] JSON 파싱 실패 — 원본 응답:`, raw);
         return null;
     }
 }
 
 // ─── 거주지 생성 / 이사가기 / 로어북 export ───
 async function classifyWorld(userHint) {
-    const raw = await callAI(buildWorldClassifyPrompt('', userHint));
+    const lang = getSettings().outputLanguage || 'ko';
+    const raw = await callAI(buildWorldClassifyPrompt('', userHint, lang));
     return parseJSON(raw) || { category: 'REALISTIC', subtype: '', location_hint: '' };
 }
 async function generateHouse(userHint, isMove) {
+    const lang = getSettings().outputLanguage || 'ko';
     const worldClass = await classifyWorld(userHint);
     const data = getCharData();
     const prompt = isMove
-        ? buildHouseMovePrompt('', worldClass, data.house.current)
-        : buildAddressGeneratePrompt('', worldClass, userHint);
+        ? buildHouseMovePrompt('', worldClass, data.house.current, lang)
+        : buildAddressGeneratePrompt('', worldClass, userHint, lang);
     const card = parseJSON(await callAI(prompt));
     if (!card) return null;
     card._worldClass = worldClass;
@@ -169,17 +231,19 @@ async function generateHouse(userHint, isMove) {
     return card;
 }
 async function exportLorebook() {
+    const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     if (!data.house.current) return null;
-    return await callAI(buildLorebookExportPrompt(data.house.current));
+    return await callAI(buildLorebookExportPrompt(data.house.current, lang));
 }
 
 // ─── 아이템 풀 ──────────────────────────────
 async function generateItemPool(spaceKey) {
     const space = SPACES.find((s) => s.key === spaceKey);
+    const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
-    const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, space.label)));
+    const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, space.label, lang)));
     if (!result) return null;
     if (result.empty) {
         data.spaces[spaceKey] = { empty: true, emptyReason: result.emptyReason };
@@ -208,9 +272,10 @@ function togglePin(spaceKey, idx) {
     save();
 }
 async function generateFoodList(subtype) {
+    const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
-    const result = parseJSON(await callAI(buildFoodListPrompt('', worldClass, subtype)));
+    const result = parseJSON(await callAI(buildFoodListPrompt('', worldClass, subtype, lang)));
     if (!result) return null;
     data[subtype] = result.empty ? { empty: true } : { empty: false, list: result.list };
     save();
@@ -327,7 +392,7 @@ function renderHouseTab() {
     return `
     <div style="padding:14px">
         <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto">
-            ${WORLD_CATS.map((c) => `<div class="csr-cat-chip" data-cat="${esc(c)}" style="flex:none;padding:7px 12px;border-radius:999px;background:${c === state.currentCategory ? DEED.ink : '#fff'};color:${c === state.currentCategory ? DEED.bg : DEED.ink};border:1px solid ${DEED.line};font-size:11px;font-weight:800;cursor:pointer">${esc(c)}</div>`).join('')}
+            ${WORLD_CATS.map((c) => `<div class="csr-cat-chip" data-cat="${esc(c)}" style="flex:none;padding:7px 12px;border-radius:999px;background:${c === state.currentCategory ? DEED.ink : '#fff'};color:${c === state.currentCategory ? DEED.bg : DEED.ink};border:1px solid ${DEED.line};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">${esc(c)}</div>`).join('')}
         </div>
         <input id="csr-ref-input" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:10px 12px;font-size:12px;color:${DEED.ink};margin-bottom:10px;box-sizing:border-box" placeholder="예: 뉴욕 맨하탄 · 조선 한성 · 해리포터-런던 · 비워두면 자동">
         <button id="csr-generate-btn" style="width:100%;padding:12px;border:none;border-radius:12px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:13px;cursor:pointer;margin-bottom:16px">집 생성하기</button>
@@ -338,7 +403,7 @@ function renderItemsTab() {
     return `
     <div style="padding:14px">
         <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:10px">
-            ${SPACES.map((s) => `<div class="csr-space-chip" data-space="${s.key}" style="flex:none;padding:7px 12px;border-radius:999px;background:${s.key === state.currentSpace ? CUTE.lav : '#fff'};color:${CUTE.text};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">${s.emoji} ${s.label}</div>`).join('')}
+            ${SPACES.map((s) => `<div class="csr-space-chip" data-space="${s.key}" style="flex:none;display:inline-flex;align-items:center;gap:4px;line-height:1.4;padding:7px 12px;border-radius:999px;background:${s.key === state.currentSpace ? CUTE.lav : '#fff'};color:${CUTE.text};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap"><span style="font-size:13px">${s.emoji}</span><span>${s.label}</span></div>`).join('')}
         </div>
         <div id="csr-tab2-body"></div>
     </div>`;
@@ -377,19 +442,27 @@ function renderTab2Body() {
 function showItemModal(spaceKey, idx) {
     const item = getCharData().spaces[spaceKey].items[idx];
     document.getElementById('csr-modal')?.remove();
+
+    // 챗틀로얄 방식: flex 중앙정렬 대신 창 크기 기준으로 top/left를 미리 계산해서 고정 배치
+    // (모바일 키보드 등으로 뷰포트 높이가 바뀌어도 모달이 다시 중앙정렬되며 위로 솟구치는 문제 방지)
+    const mw = Math.min(300, window.innerWidth * 0.9);
+    const ml = Math.max(10, (window.innerWidth - mw) / 2);
+    const mt = Math.max(10, Math.min(window.innerHeight * 0.15, window.innerHeight - 280));
+
     const modal = document.createElement('div');
     modal.id = 'csr-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:10500;padding:20px';
+    modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;background:#fff;border-radius:18px;padding:20px;font-family:system-ui;z-index:10500;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
     modal.innerHTML = `
-        <div style="width:100%;max-width:300px;background:#fff;border-radius:18px;padding:20px;font-family:system-ui">
-            <div style="font-weight:800;font-size:15px;color:${CUTE.text}">${esc(item.brand)}</div>
-            <div style="font-weight:800;color:${DEED.stamp};margin:5px 0 10px;font-size:13px">${esc(item.price)}</div>
-            <div style="font-size:11px;color:#555;line-height:1.55;background:#FFF7E8;border-radius:10px;padding:10px">${esc(item.tmi)}</div>
-            <button id="csr-modal-pin" style="margin-top:9px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.yellow};font-weight:800;color:${CUTE.text};cursor:pointer;font-size:11px">${item.pinned ? '📌 고정 해제' : '📌 고정하기'}</button>
-            <button id="csr-modal-close" style="margin-top:7px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.text};color:#fff;font-weight:800;cursor:pointer;font-size:12px">닫기</button>
-        </div>`;
+        <button id="csr-modal-close-x" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:14px;color:${CUTE.text};opacity:.6">✕</button>
+        <div style="font-weight:800;font-size:15px;color:${CUTE.text};padding-right:18px">${esc(item.brand)}</div>
+        <div style="font-weight:800;color:${DEED.stamp};margin:5px 0 10px;font-size:13px">${esc(item.price)}</div>
+        <div style="font-size:11px;color:#555;line-height:1.55;background:#FFF7E8;border-radius:10px;padding:10px">${esc(item.tmi)}</div>
+        <button id="csr-modal-pin" style="margin-top:9px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.yellow};font-weight:800;color:${CUTE.text};cursor:pointer;font-size:11px">${item.pinned ? '📌 고정 해제' : '📌 고정하기'}</button>
+        <button id="csr-modal-close" style="margin-top:7px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.text};color:#fff;font-weight:800;cursor:pointer;font-size:12px">닫기</button>
+    `;
     document.body.appendChild(modal);
     document.getElementById('csr-modal-close')?.addEventListener('click', () => modal.remove());
+    document.getElementById('csr-modal-close-x')?.addEventListener('click', () => modal.remove());
     document.getElementById('csr-modal-pin')?.addEventListener('click', () => {
         togglePin(spaceKey, idx);
         renderBody();
@@ -420,7 +493,8 @@ function bindHouseTab() {
         const hint = document.getElementById('csr-ref-input')?.value || '';
         showLoading('csr-deed-container', '챗씨부동산이 집을 알아보는 중...');
         try {
-            await generateHouse(hint, false);
+            const card = await generateHouse(hint, false);
+            if (!card) toastr.error('생성에 실패했어요 (AI 응답을 JSON으로 해석하지 못함). 다시 시도하거나 콘솔(F12) 로그를 확인해보세요.');
         } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
         document.getElementById('csr-deed-container').innerHTML = renderDeed();
         bindDeedButtons();
@@ -432,16 +506,18 @@ function bindDeedButtons() {
         const hint = document.getElementById('csr-ref-input')?.value || '';
         showLoading('csr-deed-container', '이사 중...');
         try {
-            await generateHouse(hint, true);
-            toastr.success('이사 완료!');
+            const card = await generateHouse(hint, true);
+            if (card) toastr.success('이사 완료!');
+            else toastr.error('이사 실패 (AI 응답을 JSON으로 해석하지 못함). 다시 시도해보세요.');
         } catch (e) { toastr.error(`이사 실패: ${e.message}`); }
         document.getElementById('csr-deed-container').innerHTML = renderDeed();
         bindDeedButtons();
     });
     document.getElementById('csr-lore-btn')?.addEventListener('click', async () => {
+        if (!getCharData().house.current) { toastr.warning('먼저 집을 생성해주세요.'); return; }
         try {
             const text = await exportLorebook();
-            if (!text) return;
+            if (!text) { toastr.error('변환에 실패했어요 (AI 응답이 비어있음). 다시 시도해보세요.'); return; }
             await navigator.clipboard.writeText(text);
             toastr.success('줄글로 정리해서 복사했어요!');
         } catch (e) { toastr.error(`복사 실패: ${e.message}`); }
@@ -557,13 +633,41 @@ function openFloat() {
 function closeFloat() { document.getElementById('csr-float')?.remove(); state.isPanelOpen = false; }
 function toggleFloat() { document.getElementById('csr-float') ? closeFloat() : openFloat(); }
 
-// ─── 설정 드로어 (간단 버전 — 포인트 표시 + 전체 초기화) ───
+// ─── 설정 드로어 ─────────────────────────────
 function renderSettingsDrawerInner() {
-    const own = getSettings().points;
+    const ctx = SillyTavern.getContext();
+    const s = getSettings();
+    const own = s.points;
     const cr = getChatleRoyalPoints();
-    return `<div style="padding:8px;display:flex;flex-direction:column;gap:8px">
-        <div style="font-size:0.82rem">보유 포인트: <b>${own}P</b> ${cr ? `+ 챗틀로얄 ${cr}P = 총 ${own + cr}P` : ''}</div>
-        <button id="csr-reset-btn" class="menu_button" style="width:100%">🗑 전체 초기화</button>
+    const profiles = ctx.extensionSettings?.['connectionManager']?.profiles || [];
+    const saved = s.selectedProfileName || '';
+    const profileOpts = profiles.map((p) => `<option value="${esc(p.name)}" ${p.name === saved ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+
+    return `<div style="padding:8px;display:flex;flex-direction:column;gap:10px">
+        <div>
+            <div style="font-size:0.82rem;margin-bottom:4px">연결 프로필 (선택 안 하면 현재 연결 + 로어북/챗 자동 포함)</div>
+            <select id="csr-api-profile" class="text_pole" style="width:100%">
+                <option value="">현재 연결 그대로 (로어북/챗 자동 포함)</option>
+                ${profileOpts}
+            </select>
+        </div>
+        <div>
+            <div style="font-size:0.82rem;margin-bottom:4px">Max Tokens</div>
+            <input id="csr-max-tokens" type="number" min="500" max="16000" step="500" value="${s.maxTokens || 4000}" class="text_pole" style="width:100%">
+        </div>
+        <div>
+            <div style="font-size:0.82rem;margin-bottom:4px">출력 언어 / Output Language</div>
+            <select id="csr-lang" class="text_pole" style="width:100%">
+                <option value="ko" ${s.outputLanguage === 'ko' ? 'selected' : ''}>한국어</option>
+                <option value="en" ${s.outputLanguage === 'en' ? 'selected' : ''}>English</option>
+            </select>
+        </div>
+        <div style="border-top:1px solid var(--SmartThemeBorderColor,#444);padding-top:8px">
+            <div style="font-size:0.82rem">보유 포인트: <b>${own}P</b>${cr ? ` (+ 챗틀로얄 ${cr}P 동기화 가능)` : ''}</div>
+            <div style="font-size:0.72rem;opacity:.7;margin-top:3px">⏰ 3시간마다 자동으로 10P씩 적립됩니다 (앱을 꺼두었어도 다음 접속 시 경과 시간만큼 한꺼번에 적립).</div>
+            <button id="csr-sync-btn" class="menu_button" style="width:100%;margin-top:6px">🔄 챗틀로얄 포인트 동기화</button>
+        </div>
+        <button id="csr-reset-btn" class="menu_button" style="width:100%;margin-top:4px">🗑 전체 초기화</button>
     </div>`;
 }
 function injectSettingsDrawer() {
@@ -581,6 +685,21 @@ function injectSettingsDrawer() {
 
     function renderAndBind() {
         content.innerHTML = renderSettingsDrawerInner();
+        content.querySelector('#csr-api-profile')?.addEventListener('change', (e) => {
+            const s = getSettings(); s.selectedProfileName = e.target.value || null; save();
+            toastr.success(e.target.value ? `"${e.target.value}" 프로필 선택됨` : '현재 연결 사용');
+        });
+        content.querySelector('#csr-max-tokens')?.addEventListener('change', (e) => {
+            const s = getSettings(); s.maxTokens = parseInt(e.target.value) || 4000; save();
+        });
+        content.querySelector('#csr-lang')?.addEventListener('change', (e) => {
+            const s = getSettings(); s.outputLanguage = e.target.value; save();
+            toastr.success(e.target.value === 'en' ? 'Output language set to English' : '출력 언어가 한국어로 설정됐어요');
+        });
+        content.querySelector('#csr-sync-btn')?.addEventListener('click', () => {
+            syncChatleRoyalPoints();
+            renderAndBind();
+        });
         content.querySelector('#csr-reset-btn')?.addEventListener('click', async () => {
             const { Popup, POPUP_RESULT } = SillyTavern.getContext();
             const ok = await Popup.show.confirm('전체 초기화', '챗씨부동산의 모든 데이터(포인트/거주지/소지품)를 초기화합니다. 되돌릴 수 없습니다. 진행할까요?');
