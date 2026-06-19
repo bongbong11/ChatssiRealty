@@ -237,6 +237,50 @@ async function exportLorebook() {
     return await callAI(buildLorebookExportPrompt(data.house.current, lang));
 }
 
+// 클립보드 쓰기 — 비동기 AI 호출 후라 유저 제스처(transient activation)가 만료돼서
+// navigator.clipboard.writeText가 막힐 수 있음 → execCommand 폴백, 그래도 안 되면 수동복사 모달
+async function copyToClipboard(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch (e) {
+        console.warn(`[${MODULE_NAME}] clipboard.writeText 실패, execCommand 폴백 시도:`, e.message);
+    }
+    try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        ta.remove();
+        if (ok) return true;
+    } catch (e2) {
+        console.warn(`[${MODULE_NAME}] execCommand 폴백도 실패:`, e2.message);
+    }
+    showManualCopyModal(text);
+    return false;
+}
+function showManualCopyModal(text) {
+    document.getElementById('csr-copy-modal')?.remove();
+    const mw = Math.min(320, window.innerWidth * 0.9);
+    const ml = Math.max(10, (window.innerWidth - mw) / 2);
+    const mt = Math.max(10, window.innerHeight * 0.15);
+    const modal = document.createElement('div');
+    modal.id = 'csr-copy-modal';
+    modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;background:#fff;border-radius:14px;padding:16px;font-family:system-ui;z-index:10600;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
+    modal.innerHTML = `
+        <div style="font-size:12px;font-weight:800;color:${DEED.ink};margin-bottom:8px">자동 복사가 막혔어요 — 아래 텍스트를 직접 선택해서 복사해주세요</div>
+        <textarea id="csr-copy-ta" readonly style="width:100%;height:160px;font-size:11px;padding:8px;border:1px solid ${DEED.line};border-radius:8px;box-sizing:border-box">${esc(text)}</textarea>
+        <button id="csr-copy-modal-close" style="margin-top:8px;width:100%;padding:8px;border:none;border-radius:10px;background:${DEED.ink};color:${DEED.bg};font-weight:800;cursor:pointer;font-size:12px">닫기</button>
+    `;
+    document.body.appendChild(modal);
+    const ta = document.getElementById('csr-copy-ta');
+    ta.focus(); ta.select();
+    document.getElementById('csr-copy-modal-close')?.addEventListener('click', () => modal.remove());
+}
+
 // ─── 아이템 풀 ──────────────────────────────
 async function generateItemPool(spaceKey) {
     const space = SPACES.find((s) => s.key === spaceKey);
@@ -391,7 +435,7 @@ function renderFoodList(subtype) {
 function renderHouseTab() {
     return `
     <div style="padding:14px">
-        <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto">
+        <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
             ${WORLD_CATS.map((c) => `<div class="csr-cat-chip" data-cat="${esc(c)}" style="flex:none;padding:7px 12px;border-radius:999px;background:${c === state.currentCategory ? DEED.ink : '#fff'};color:${c === state.currentCategory ? DEED.bg : DEED.ink};border:1px solid ${DEED.line};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">${esc(c)}</div>`).join('')}
         </div>
         <input id="csr-ref-input" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:10px 12px;font-size:12px;color:${DEED.ink};margin-bottom:10px;box-sizing:border-box" placeholder="예: 뉴욕 맨하탄 · 조선 한성 · 해리포터-런던 · 비워두면 자동">
@@ -402,7 +446,7 @@ function renderHouseTab() {
 function renderItemsTab() {
     return `
     <div style="padding:14px">
-        <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:10px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;padding-bottom:10px">
             ${SPACES.map((s) => `<div class="csr-space-chip" data-space="${s.key}" style="flex:none;display:inline-flex;align-items:center;gap:4px;line-height:1.4;padding:7px 12px;border-radius:999px;background:${s.key === state.currentSpace ? CUTE.lav : '#fff'};color:${CUTE.text};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap"><span style="font-size:13px">${s.emoji}</span><span>${s.label}</span></div>`).join('')}
         </div>
         <div id="csr-tab2-body"></div>
@@ -477,10 +521,13 @@ function renderBody() {
     if (state.currentTab === 'house') {
         body.innerHTML = renderHouseTab();
         bindHouseTab();
-    } else {
+    } else if (state.currentTab === 'items') {
         body.innerHTML = renderItemsTab();
         document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
         bindItemsTab();
+    } else if (state.currentTab === 'settings') {
+        body.innerHTML = `<div style="padding:14px">${renderSettingsTabInner()}</div>`;
+        bindSettingsTabInner();
     }
 }
 
@@ -518,9 +565,10 @@ function bindDeedButtons() {
         try {
             const text = await exportLorebook();
             if (!text) { toastr.error('변환에 실패했어요 (AI 응답이 비어있음). 다시 시도해보세요.'); return; }
-            await navigator.clipboard.writeText(text);
-            toastr.success('줄글로 정리해서 복사했어요!');
-        } catch (e) { toastr.error(`복사 실패: ${e.message}`); }
+            const copied = await copyToClipboard(text);
+            if (copied) toastr.success('줄글로 정리해서 복사했어요!');
+            // 실패 시 showManualCopyModal이 이미 안내 모달을 띄워줌
+        } catch (e) { toastr.error(`처리 실패: ${e.message}`); }
     });
 }
 
@@ -605,6 +653,7 @@ function createFloatingPanel() {
         <div id="csr-tabs" style="display:flex;border-bottom:1px solid ${DEED.line};flex-shrink:0">
             <button class="csr-tab-btn" data-tab="house" style="flex:1;background:none;border:none;border-bottom:2px solid ${DEED.ink};padding:9px 0;cursor:pointer;color:${DEED.ink};font-size:12px;font-weight:800">🏠 거주지</button>
             <button class="csr-tab-btn" data-tab="items" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:9px 0;cursor:pointer;color:${DEED.ink};opacity:.5;font-size:12px;font-weight:800">🧳 소지품</button>
+            <button class="csr-tab-btn" data-tab="settings" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:9px 0;cursor:pointer;color:${DEED.ink};opacity:.5;font-size:12px;font-weight:800">⚙️ 설정</button>
         </div>
         <div id="csr-content" style="flex:1;overflow-y:auto"></div>
     </div>`;
@@ -633,8 +682,8 @@ function openFloat() {
 function closeFloat() { document.getElementById('csr-float')?.remove(); state.isPanelOpen = false; }
 function toggleFloat() { document.getElementById('csr-float') ? closeFloat() : openFloat(); }
 
-// ─── 설정 드로어 ─────────────────────────────
-function renderSettingsDrawerInner() {
+// ─── 설정 탭 (메인 패널 안의 ⚙️ 설정 탭) ───────
+function renderSettingsTabInner() {
     const ctx = SillyTavern.getContext();
     const s = getSettings();
     const own = s.points;
@@ -643,83 +692,65 @@ function renderSettingsDrawerInner() {
     const saved = s.selectedProfileName || '';
     const profileOpts = profiles.map((p) => `<option value="${esc(p.name)}" ${p.name === saved ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 
-    return `<div style="padding:8px;display:flex;flex-direction:column;gap:10px">
+    return `<div style="display:flex;flex-direction:column;gap:12px">
         <div>
-            <div style="font-size:0.82rem;margin-bottom:4px">연결 프로필 (선택 안 하면 현재 연결 + 로어북/챗 자동 포함)</div>
-            <select id="csr-api-profile" class="text_pole" style="width:100%">
+            <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">연결 프로필 (선택 안 하면 현재 연결 + 로어북/챗 자동 포함)</div>
+            <select id="csr-api-profile" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
                 <option value="">현재 연결 그대로 (로어북/챗 자동 포함)</option>
                 ${profileOpts}
             </select>
         </div>
         <div>
-            <div style="font-size:0.82rem;margin-bottom:4px">Max Tokens</div>
-            <input id="csr-max-tokens" type="number" min="500" max="16000" step="500" value="${s.maxTokens || 4000}" class="text_pole" style="width:100%">
+            <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">Max Tokens</div>
+            <input id="csr-max-tokens" type="number" min="500" max="16000" step="500" value="${s.maxTokens || 4000}" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
         </div>
         <div>
-            <div style="font-size:0.82rem;margin-bottom:4px">출력 언어 / Output Language</div>
-            <select id="csr-lang" class="text_pole" style="width:100%">
+            <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">출력 언어 / Output Language</div>
+            <select id="csr-lang" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
                 <option value="ko" ${s.outputLanguage === 'ko' ? 'selected' : ''}>한국어</option>
                 <option value="en" ${s.outputLanguage === 'en' ? 'selected' : ''}>English</option>
             </select>
         </div>
-        <div style="border-top:1px solid var(--SmartThemeBorderColor,#444);padding-top:8px">
-            <div style="font-size:0.82rem">보유 포인트: <b>${own}P</b>${cr ? ` (+ 챗틀로얄 ${cr}P 동기화 가능)` : ''}</div>
-            <div style="font-size:0.72rem;opacity:.7;margin-top:3px">⏰ 3시간마다 자동으로 10P씩 적립됩니다 (앱을 꺼두었어도 다음 접속 시 경과 시간만큼 한꺼번에 적립).</div>
-            <button id="csr-sync-btn" class="menu_button" style="width:100%;margin-top:6px">🔄 챗틀로얄 포인트 동기화</button>
+        <div style="border-top:1px solid ${DEED.line};padding-top:10px">
+            <div style="font-size:12px;color:${DEED.ink}">보유 포인트: <b>${own}P</b>${cr ? ` (+ 챗틀로얄 ${cr}P 동기화 가능)` : ''}</div>
+            <div style="font-size:10px;color:${DEED.ink};opacity:.7;margin-top:3px">⏰ 3시간마다 자동으로 10P씩 적립됩니다 (앱을 꺼두었어도 다음 접속 시 경과 시간만큼 한꺼번에 적립).</div>
+            <button id="csr-sync-btn" style="width:100%;margin-top:8px;padding:9px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer">🔄 챗틀로얄 포인트 동기화</button>
         </div>
-        <button id="csr-reset-btn" class="menu_button" style="width:100%;margin-top:4px">🗑 전체 초기화</button>
+        <button id="csr-reset-btn" style="width:100%;padding:9px;border:1px solid ${DEED.stamp};border-radius:12px;background:#fff;color:${DEED.stamp};font-weight:800;font-size:12px;cursor:pointer">🗑 전체 초기화</button>
     </div>`;
 }
-function injectSettingsDrawer() {
-    if (document.getElementById('csr-ext-settings')) return;
-    const html = `<div class="inline-drawer" id="csr-ext-settings">
-        <div class="inline-drawer-toggle inline-drawer-header">
-            <b>🏠 챗씨부동산</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-        </div>
-        <div class="inline-drawer-content" id="csr-settings-content"></div>
-    </div>`;
-    const target = document.getElementById('extensions_settings2') ?? document.getElementById('extensions_settings');
-    target?.insertAdjacentHTML('beforeend', html);
-    const content = document.getElementById('csr-settings-content');
-
-    function renderAndBind() {
-        content.innerHTML = renderSettingsDrawerInner();
-        content.querySelector('#csr-api-profile')?.addEventListener('change', (e) => {
-            const s = getSettings(); s.selectedProfileName = e.target.value || null; save();
-            toastr.success(e.target.value ? `"${e.target.value}" 프로필 선택됨` : '현재 연결 사용');
-        });
-        content.querySelector('#csr-max-tokens')?.addEventListener('change', (e) => {
-            const s = getSettings(); s.maxTokens = parseInt(e.target.value) || 4000; save();
-        });
-        content.querySelector('#csr-lang')?.addEventListener('change', (e) => {
-            const s = getSettings(); s.outputLanguage = e.target.value; save();
-            toastr.success(e.target.value === 'en' ? 'Output language set to English' : '출력 언어가 한국어로 설정됐어요');
-        });
-        content.querySelector('#csr-sync-btn')?.addEventListener('click', () => {
-            syncChatleRoyalPoints();
-            renderAndBind();
-        });
-        content.querySelector('#csr-reset-btn')?.addEventListener('click', async () => {
-            const { Popup, POPUP_RESULT } = SillyTavern.getContext();
-            const ok = await Popup.show.confirm('전체 초기화', '챗씨부동산의 모든 데이터(포인트/거주지/소지품)를 초기화합니다. 되돌릴 수 없습니다. 진행할까요?');
-            if (ok === POPUP_RESULT.AFFIRMATIVE) {
-                SillyTavern.getContext().extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
-                save();
-                toastr.success('초기화 완료');
-                renderAndBind();
-                closeFloat();
-            }
-        });
-    }
-    renderAndBind();
+function bindSettingsTabInner() {
+    document.getElementById('csr-api-profile')?.addEventListener('change', (e) => {
+        const s = getSettings(); s.selectedProfileName = e.target.value || null; save();
+        toastr.success(e.target.value ? `"${e.target.value}" 프로필 선택됨` : '현재 연결 사용');
+    });
+    document.getElementById('csr-max-tokens')?.addEventListener('change', (e) => {
+        const s = getSettings(); s.maxTokens = parseInt(e.target.value) || 4000; save();
+    });
+    document.getElementById('csr-lang')?.addEventListener('change', (e) => {
+        const s = getSettings(); s.outputLanguage = e.target.value; save();
+        toastr.success(e.target.value === 'en' ? 'Output language set to English' : '출력 언어가 한국어로 설정됐어요');
+    });
+    document.getElementById('csr-sync-btn')?.addEventListener('click', () => {
+        syncChatleRoyalPoints();
+        renderBody();
+    });
+    document.getElementById('csr-reset-btn')?.addEventListener('click', async () => {
+        const { Popup, POPUP_RESULT } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm('전체 초기화', '챗씨부동산의 모든 데이터(포인트/거주지/소지품)를 초기화합니다. 되돌릴 수 없습니다. 진행할까요?');
+        if (ok === POPUP_RESULT.AFFIRMATIVE) {
+            SillyTavern.getContext().extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
+            save();
+            toastr.success('초기화 완료');
+            renderBody();
+        }
+    });
 }
 
 // ─── 초기화 ─────────────────────────────────
 export async function onActivate() {
     console.log(`[${MODULE_NAME}] 활성화`);
     checkRefill();
-    injectSettingsDrawer();
 
     if (!document.getElementById('csr-wand-btn')) {
         const html = `<div id="csr-wand-btn" title="챗씨부동산" style="cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:5px;font-size:13px">
