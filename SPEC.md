@@ -139,16 +139,27 @@ SillyTavern 확장. 두 개의 탭으로 구성됨.
   - 구현 방식: 마지막 적립 타임스탬프 저장 → ST 재접속 시 경과시간 계산해서 일괄 캐치업 적립 (`setInterval` 단독 방식은 ST 꺼져있으면 적립 안 되므로 부적합)
 - 챗틀로얄 설치 시 → 그 포인트 데이터를 감지해서 **합산** (graceful fallback: 없으면 그냥 스킵, 에러 없이)
 
-## 5. 기술 노트 (빌드시 참고)
-- **데이터 읽기 방식 통일**: 거주지 생성(이사가기)과 아이템 풀 생성 모두 동일하게
-  `generateQuietPrompt({quietToLoud:true})` 류 방식으로 **최종 조립 프롬프트 전체**를
-  한 번에 읽어옴 (캐릭터시트/페르소나/활성화된 로어북/최근 챗 히스토리가 이미 합쳐진 상태) —
-  챗씨부인에서 쓰던 기법과 동일. 각 항목을 따로따로 호출해서 긁어올 필요 없음.
-- **정보블록 필터링**: 다른 확장이 주입한 상태창/정보블록(고정 태그·구분자로 감싸진 텍스트)이
-  같은 프롬프트에 섞여 있을 수 있음 → 생성 프롬프트에 무시 지시 포함, 또는 정규식으로 사전 제거.
-  실제 빌드 시 각 정보블록 확장이 쓰는 구분자 패턴 확인 필요.
-- 캐릭터/로어북 개별 데이터 접근(보조용, 필요시): `getContext()`, `characters[this_chid]`,
-  `power_user.persona_description`, World Info 엔트리, `chat` 배열
+## 5. 기술 노트 (빌드시 참고 — 챗씨부인/챗틀로얄 실제 코드 기준으로 검증됨)
+- **컨텍스트 접근**: `SillyTavern.getContext()`로 항상 접근 (import된 getContext 아님)
+- **설정 저장**: `ctx.extensionSettings[MODULE_NAME]`에 저장, `ctx.saveSettingsDebounced()`로 저장
+- **AI 호출**: `ctx.generateQuietPrompt({ quietPrompt, quietToLoud:true, skipWIAN:false })` 한 번 호출로
+  캐릭터시트/페르소나/로어북/최근 챗 히스토리가 이미 자동으로 컨텍스트에 섞인 채 생성됨.
+  컨텍스트를 별도로 "읽어와서" 텍스트로 프롬프트에 박아넣을 필요 없음 (이전 계획 수정됨).
+  단, 이 방식은 ST의 "현재 연결"을 사용하며 별도 API 프로필 선택을 지원하지 않음 — 별도 프로필을
+  쓰고 싶다면 `ctx.ConnectionManagerRequestService.sendRequest(profile.id, messages, maxTokens, options)`
+  방식으로 가야 하지만, 이 경우 로어북/챗 컨텍스트 자동 포함이 안 되므로 직접 모아서 프롬프트에
+  넣어줘야 함 (챗씨부인의 `callAI()` 두 갈래 패턴 참고)
+- **정보블록 필터링**: 자동 포함되는 컨텍스트라 직접 정규식 제거는 어려움 → 프롬프트 내
+  가드 문구(INFO_BLOCK_GUARD)로 "무시하라"고 명시하는 방식으로 대체
+- **챗틀로얄 포인트 키 확인됨**: `ctx.extensionSettings['chatl_royal'].points` (모듈명 `chatl_royal`)
+- **데이터 단위**: 챗(대화) 단위가 아니라 **캐릭터 단위**로 저장 (캐릭터당 하나의 거주지/소지품 데이터,
+  여러 채팅방을 오가도 유지됨) — `ctx.characters[ctx.characterId].avatar`를 키로 사용
+- **UI 마운트**: 외부 style.css 없이 인라인 스타일로 통일 (챗씨부인/챗틀로얄과 동일 컨벤션).
+  `#extensions_settings`에는 간단한 설정 드로어만, 실제 인터랙티브 패널은 `document.body`에
+  별도로 추가하는 드래그 가능한 플로팅 패널 (`makeDraggable` 패턴 재사용)
+- **유틸리티**: `esc()` (HTML 이스케이프), `toastr.success/error/warning`, `Popup.show.confirm()` —
+  전부 챗씨부인/챗틀로얄에서 검증된 패턴 그대로 재사용
+- **설정 UI 안전장치**: "전체 초기화" 버튼은 `Popup.show.confirm()`으로 확인 후 처리
 - 데이터 저장: `extension_settings[extensionName]` — 캐릭터별/채팅별로 최소 데이터만 저장 (생성된 집 정보, 아이템 풀, 타임스탬프), 전체 채팅로그 통째 복제 금지 (캐시 비대화 방지)
 - AI 호출: Connection Manager `ConnectionManagerRequestService` 사용, 확장 설정에 프로필 선택 드롭다운 별도 제공
 - 설정 UI에 "전체 초기화" 버튼 필요 (extension_settings 통째로 비우기)
