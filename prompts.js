@@ -21,6 +21,12 @@ function langInstruction(lang) {
     ? '⚠ Write all generated text content in English. Do not mix languages.'
     : '⚠ 생성되는 모든 텍스트 내용은 한국어로 작성할 것. 언어를 섞지 말 것.';
 }
+// 출력 형식 바로 위에서 한 번 더 강조 — JSON 영문 key를 보고 모델이 값까지 영어로 쓰는 경향 방지
+function langInstructionStrong(lang) {
+  return lang === 'en'
+    ? '⚠ REMINDER: the JSON keys below (emoji, name, brand, etc.) stay as English field names, but every actual text VALUE you write into them must be in English too — this reminder exists because models sometimes default to the wrong language when keys are in English. Re-check your output language now.'
+    : '⚠ 다시 한번 강조: 아래 JSON의 key(emoji, name, brand 등 영문 필드명)는 형식이니까 그대로 두고, 그 안에 채워넣는 실제 텍스트 값은 전부 한국어로 작성할 것. 영문 key를 보고 값까지 영어로 쓰지 않도록 출력 직전에 다시 확인할 것.';
+}
 
 export function buildWorldClassifyPrompt(_unused, userHint, lang = 'ko') {
   return `
@@ -46,6 +52,8 @@ MAJOR_IP인데 세부 시리즈가 여러 개로 갈리는 경우(예: 콜오브
   2순위 - 유저 텍스트에 구체적 시리즈명이 있으면 그걸로 판별 (부분 일치 허용,
           "블옵"/"블랙옵스"/"콜 오브 듀티 블랙옵스" 전부 동일 인식)
   3순위 - 둘 다 없으면 기본값 사용 (콜오브듀티 → 모던워페어 리부트)
+
+${langInstructionStrong(lang)}
 
 출력 형식: JSON만 출력, 다른 텍스트나 코드블록 표시 없이 순수 JSON으로만.
 { "category": "REALISTIC|FANTASY|HISTORICAL|MAJOR_IP", "subtype": "...", "location_hint": "..." }
@@ -87,6 +95,8 @@ ${langInstruction(lang)}
 캐릭터 재산수준이 낮으면 hasGarage/hasYard 등은 false로,
 재산수준이 매우 높으면 appendix(추가 자산)에 1~2개 별도 생성.
 
+${langInstructionStrong(lang)}
+
 출력 형식: JSON만 출력, 다른 텍스트나 코드블록 표시 없이.
 { "residenceType":"", "price":"", "buildingType":"", "rooms":0, "bathrooms":0,
   "structureStyle":"", "hasYard":true, "hasGarage":true, "location":"", "address":"",
@@ -111,6 +121,8 @@ ${langInstruction(lang)}
 작업: 위 맥락을 바탕으로 새 거주지 카드를 생성하라.
 같은 캐릭터의 톤/일관성은 유지하되, 기존 데이터를 그대로 복사하지 말 것.
 출력 항목 구조는 buildAddressGeneratePrompt와 동일.
+
+${langInstructionStrong(lang)}
 
 출력 형식: JSON만 출력 (구조 동일), 다른 텍스트나 코드블록 표시 없이.
 `.trim();
@@ -153,6 +165,8 @@ ${langInstruction(lang)}
 
 음식보관 공간(주방의 팬트리/냉장고)은 별도 프롬프트(buildFoodListPrompt) 사용 — 이 프롬프트 대상 아님.
 
+${langInstructionStrong(lang)}
+
 출력 형식: JSON만 출력, 다른 텍스트나 코드블록 표시 없이.
 { "empty": false, "items": [ { "emoji":"", "name":"", "brand":"", "price":"",
   "tmi":"", "unlockCost":0, "isSecretGift":false }, ... 12개 ] }
@@ -172,12 +186,16 @@ ${langInstruction(lang)}
 세계관 분류 결과: ${JSON.stringify(worldClass)}
 대상: ${subtype === "fridge" ? "냉장고" : "팬트리"}
 
-작업: 일반적인 식료품 목록을 생성하되, 명품처럼 수집가치 있는 아이템이 아니므로
-포인트 잠금 없이 대부분 무잠금 리스트로. 단, 고가/특별한 수입식재료나 희귀 주류 등
-1~2개만 포인트로 해금(unlockCost 5~15)하게 설정.
+작업: 일반적인 식료품 목록을 생성하되, 명품처럼 "비싸서" 잠그는 게 아니라
+**왜 이게 여기 있지? 싶은 의외성/웃긴 포인트가 있는 품목 1~2개만** 포인트로 해금(unlockCost 5~15)
+하게 설정. 가격대와 무관하게, 캐릭터 성격/사연을 보고 "어 이거 좀 웃기네" 싶은 디테일을 노릴 것
+(예: 다이어트 중이라면서 몰래 숨겨둔 불량식품, 안 먹는다고 했던 음식이 사실 꽉 차있음,
+용도를 알 수 없는 이상한 재료 등). 평범한 식재료는 그냥 다 무잠금으로.
 시대에 냉장고 개념이 없으면(예: 조선시대) "냉장고" 자체를 생성하지 말고 empty 반환.
 
 각 항목 필드: { "emoji":"", "name":"", "qty":"", "unlockCost": 0 또는 5~15 }
+
+${langInstructionStrong(lang)}
 
 출력 형식: JSON만 출력, 다른 텍스트나 코드블록 표시 없이.
 { "empty": false, "list": [ { "emoji":"", "name":"", "qty":"", "unlockCost":0 }, ... ] }
