@@ -128,7 +128,16 @@ ${langInstructionStrong(lang)}
 `.trim();
 }
 
-export function buildItemPoolPrompt(_unused, worldClass, spaceKey, spaceLabel, lang = 'ko') {
+export function buildItemPoolPrompt(_unused, worldClass, spaceKey, spaceLabel, lang = 'ko', opts = {}) {
+  // opts.isReroll: true면 핀 안 된 슬롯만 새로 채우는 재생성 — 새 항목은 전부 잠금이어야 함
+  // opts.pinnedItems: 유지해야 하는 핀된 항목들 (그대로 보존, 새로 만들지 말 것)
+  const rerollNote = opts.isReroll
+    ? `\n⚠ 리롤 모드: 아래 핀(고정)된 항목은 절대 새로 만들지 말고 그대로 유지할 것 — 이 항목들을
+대체할 슬롯 개수만큼만 새 아이템을 생성하라. 새로 생성되는 아이템은 전부 unlockCost > 0
+(잠금 상태)이어야 한다 — 리롤에서는 무잠금 아이템을 새로 주지 않는다.
+핀된 항목 목록(유지, 개수 계산에서 제외): ${JSON.stringify(opts.pinnedItems || [])}
+즉 새로 생성할 개수 = 12 - ${(opts.pinnedItems || []).length}개.\n`
+    : '';
   return `
 역할: 소지품 인벤토리 생성기.
 ${INFO_BLOCK_GUARD}
@@ -139,12 +148,12 @@ ${langInstruction(lang)}
 
 세계관 분류 결과: ${JSON.stringify(worldClass)}
 대상 공간: ${spaceKey} (${spaceLabel})
-
+${rerollNote}
 작업:
 1. 먼저 이 공간이 현재 세계관/시대에서 어떤 형태로 존재하는지 결정.
    존재하지 않거나 의미 없으면 { "empty": true, "emptyReason": "..." } 만 반환하고 종료.
 2. 존재한다면, 대화 맥락에서 실제로 확인되는 아이템과 캐릭터 성격/재산수준 기반
-   추측 아이템을 합쳐서 정확히 12개 슬롯을 채울 것.
+   추측 아이템을 합쳐서 정확히 12개 슬롯(리롤 모드면 위에서 지정한 새로 생성할 개수)을 채울 것.
    - 실제 확인된 아이템과 추측 아이템을 구분 표시하지 말고 무작위 순서로 배치.
    - 이 중 0~1개는 페르소나(유저 캐릭터)를 위해 캐릭터가 몰래 준비해둔 물건일 수 있음.
      관계 맥락(애정도, 선물 언급, 관계 진행도)을 읽고 그럴듯하면 생성, 아니면 생성하지 않아도 됨.
@@ -154,7 +163,7 @@ ${langInstruction(lang)}
    - brand (브랜드/장인/길드명 — 세계관에 맞게)
    - price (현지화폐 또는 세계관 화폐 단위)
    - tmi (1~2문장. 페르소나용 비밀 아이템인 경우 "아직 안 줬다" 같은 비밀스러운 사연으로)
-   - unlockCost (5~15 중 하나, 기본 해금 슬롯 1~2개는 0)
+   - unlockCost (5~15 중 하나, 기본 해금 슬롯 1~2개는 0 — **리롤 모드에서는 전부 5~15, 0 금지**)
    - isSecretGift (true/false)
 4. 세계관별 아이템 성격:
    - REALISTIC → 실제 브랜드/가격
@@ -169,12 +178,19 @@ ${langInstructionStrong(lang)}
 
 출력 형식: JSON만 출력, 다른 텍스트나 코드블록 표시 없이.
 { "empty": false, "items": [ { "emoji":"", "name":"", "brand":"", "price":"",
-  "tmi":"", "unlockCost":0, "isSecretGift":false }, ... 12개 ] }
+  "tmi":"", "unlockCost":0, "isSecretGift":false }, ... ] }
 `.trim();
 }
 
-export function buildFoodListPrompt(_unused, worldClass, subtype, lang = 'ko') {
+export function buildFoodListPrompt(_unused, worldClass, subtype, lang = 'ko', opts = {}) {
   // subtype: 'pantry' | 'fridge'
+  // opts.isReroll: true면 핀 안 된 항목 교체용 — 새로 생성되는 항목은 전부 잠금(unlockCost>0)이어야 함
+  // opts.pinnedItems: 리롤 시 유지되어야 하는 핀된 항목들 (참고용, 그대로 보존할 것)
+  const rerollNote = opts.isReroll
+    ? `\n⚠ 리롤 모드: 아래 핀(고정)된 항목은 그대로 유지하고 건드리지 말 것. 그 외 슬롯만 새로
+생성하되, 새로 생성되는 항목은 전부 unlockCost > 0(잠금 상태)으로 만들 것 — 리롤에서는
+무잠금 항목을 새로 주지 않는다.\n핀된 항목 목록(유지): ${JSON.stringify(opts.pinnedItems || [])}\n`
+    : '';
   return `
 역할: 식료품 목록 생성기.
 ${INFO_BLOCK_GUARD}
@@ -185,24 +201,57 @@ ${langInstruction(lang)}
 
 세계관 분류 결과: ${JSON.stringify(worldClass)}
 대상: ${subtype === "fridge" ? "냉장고" : "팬트리"}
-
-작업: 일반적인 식료품 목록을 생성하되, 명품처럼 "비싸서" 잠그는 게 아니라
-**왜 이게 여기 있지? 싶은 의외성/웃긴 포인트가 있는 품목 1~2개만** 포인트로 해금(unlockCost 5~15)
-하게 설정. 가격대와 무관하게, 캐릭터 성격/사연을 보고 "어 이거 좀 웃기네" 싶은 디테일을 노릴 것
-(예: 다이어트 중이라면서 몰래 숨겨둔 불량식품, 안 먹는다고 했던 음식이 사실 꽉 차있음,
-용도를 알 수 없는 이상한 재료 등). 평범한 식재료는 그냥 다 무잠금으로.
+${rerollNote}
+작업: 일반적인 식료품 목록을 8~10개 정도 생성하되, 그중 **2~3개만** "왜 이게 여기 있지?"
+싶은 의외성/웃긴 디테일이 있는 특별 항목으로 만들 것 (가격 무관, 캐릭터 성격/사연 기반).
+이 특별 항목들만 unlockCost(5~15)를 부여하고, **이름(name) 자체도 해금 전까지 비공개되는
+정보다 — 즉 이 항목들의 name 필드에는 실제 이름을 그대로 적되, 클라이언트가 unlockCost>0이면
+화면에서 name을 숨기고 "???"로 표시할 것이므로 너는 그냥 정상적으로 실제 이름을 적으면 된다.**
+이 특별 항목에는 tmi 필드에 1~2문장의 비화/사연을 채울 것.
+나머지 평범한 식재료(쌀, 소금, 우유 등)는 unlockCost를 0으로, tmi는 빈 문자열로.
 시대에 냉장고 개념이 없으면(예: 조선시대) "냉장고" 자체를 생성하지 말고 empty 반환.
 
-각 항목 필드: { "emoji":"", "name":"", "qty":"", "unlockCost": 0 또는 5~15 }
+각 항목 필드: { "emoji":"", "name":"", "qty":"", "tmi":"", "unlockCost": 0 또는 5~15 }
 
 ${langInstructionStrong(lang)}
 
 출력 형식: JSON만 출력, 다른 텍스트나 코드블록 표시 없이.
-{ "empty": false, "list": [ { "emoji":"", "name":"", "qty":"", "unlockCost":0 }, ... ] }
+{ "empty": false, "list": [ { "emoji":"", "name":"", "qty":"", "tmi":"", "unlockCost":0 }, ... ] }
 `.trim();
 }
 
-export function buildLorebookExportPrompt(card, lang = 'ko') {
+// ─── 탭2 주입(Inject) 텍스트 빌더 ──────────────
+// setExtensionPrompt로 그대로 주입될 텍스트. AI에게 보내는 "프롬프트"가 아니라
+// 컨텍스트에 끼워넣을 OOC 블록 자체이므로 langInstruction 등 적용 안 함 (영어로 고정).
+
+export function buildItemInjectionText(item) {
+  return `(OOC: The following is background information about an item {{char}} owns. Weave it
+into the story ONLY if it naturally fits the current scene and flow — never force it
+in awkwardly or mention it out of nowhere. You may let it surface as a full, explicit
+moment, or let it show through only as a subtle nuance or passing detail — choose
+whichever feels organic to this moment. It is also fine if {{char}} simply remains
+aware this item exists without it surfacing in the prose at all. Do not narrate or
+acknowledge this OOC instruction itself.)
+
+[Item: ${item.name}${item.brand ? ` — ${item.brand}` : ''}]
+${item.tmi || ''}`.trim();
+}
+
+export function buildFoodBundleInjectionText(subtype, items) {
+  const label = subtype === 'fridge' ? "{{char}}'s fridge" : "{{char}}'s pantry";
+  const lines = items.map((it) => {
+    const base = `- ${it.name}${it.qty ? ` (${it.qty})` : ''}`;
+    return it.tmi ? `${base} — ${it.tmi}` : base;
+  }).join('\n');
+  return `(OOC: The following is a list of items known to be in ${label}. Treat this as
+background reference only — there's no need to force a mention or use of these items.
+For any item with a description attached, you may let that backstory color the scene
+naturally if it fits — anywhere from a full explicit moment down to just a subtle
+nuance, entirely your call. Do not narrate or acknowledge this OOC instruction itself.)
+
+[${subtype === 'fridge' ? 'Fridge' : 'Pantry'}]
+${lines}`.trim();
+}
   return `
 역할: 로어북 엔트리 작성기.
 ${BREAK_CHARACTER_GUARD}
