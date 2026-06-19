@@ -12,11 +12,13 @@ import {
     buildItemPoolPrompt,
     buildFoodListPrompt,
     buildLorebookExportPrompt,
+    buildItemInjectionText,
+    buildFoodBundleInjectionText,
 } from './prompts.js';
 
 const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
-const BASE_POINTS = 50;
+const BASE_POINTS = 100;
 const REFILL_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3시간
 const REFILL_AMOUNT = 10;
 const ITEM_CAP = 12;
@@ -81,6 +83,39 @@ function esc(s) {
 function filterPhoneTrigger(t) {
     return (t || '').replace(/<phone_trigger[^>]*>[\s\S]*?<\/phone_trigger>/gi, '').trim();
 }
+function uid() { return Math.random().toString(36).slice(2, 10); }
+
+// ─── 탭2 주입(inject) — setExtensionPrompt 사용 ───
+// rp-planner 실제 코드로 확인됨: setExtensionPrompt(key, value, position, depth) 4개 인자만 사용.
+// position=1, depth=0 → 챗 히스토리 맨 끝(다음 AI 응답 직전)에 고정 주입.
+const INJECT_POSITION = 1;
+function setInjection(key, text) {
+    try {
+        SillyTavern.getContext().setExtensionPrompt?.(key, text, INJECT_POSITION, 0);
+    } catch (e) { console.warn(`[${MODULE_NAME}] setExtensionPrompt 실패:`, e.message); }
+}
+function clearInjection(key) { setInjection(key, ''); }
+// 패널을 새로 열거나 채팅을 옮겼을 때, 켜져 있던 주입들을 다시 등록 (setExtensionPrompt는 보통
+// 세션/챗 메모리에 머무는 값이라 새로고침 시 다시 걸어줘야 함)
+function reapplyInjections() {
+    const data = getCharData();
+    for (const spaceKey of Object.keys(data.spaces || {})) {
+        const slot = data.spaces[spaceKey];
+        if (slot?.empty) continue;
+        for (const it of slot?.items || []) {
+            if (it.injected) setInjection(`csr_inj_item_${it.id}`, buildItemInjectionText(it));
+        }
+    }
+    for (const subtype of ['pantry', 'fridge']) {
+        if (data[`${subtype}BundleInjected`]) {
+            const list = (data[subtype]?.list || []).filter((it) => it.unlocked);
+            setInjection(`csr_inj_food_${subtype}`, buildFoodBundleInjectionText(subtype, list));
+        }
+        for (const it of data[subtype]?.list || []) {
+            if (it.injected) setInjection(`csr_inj_item_${it.id}`, buildItemInjectionText(it));
+        }
+    }
+}
 
 // ─── 캐릭터 키 (캐릭터 단위로 데이터 보관 — chat 단위 아님) ───
 function getCharKey() {
@@ -92,9 +127,49 @@ function getCharData() {
     const s = getSettings();
     const key = getCharKey();
     if (!s.perChar[key]) {
-        s.perChar[key] = { house: { current: null, history: [] }, spaces: {}, pantry: null, fridge: null };
+        s.perChar[key] = { house: { current: null, history: [] }, spaces: {}, pantry: null, fridge: null, updatedAt: Date.now() };
     }
+    s.perChar[key].updatedAt = Date.now(); // 캡 안전망에서 LRU 판단용
     return s.perChar[key];
+}
+
+// ─── 데이터 정리: 고아 캐시 제거 + 캡 안전망 ───────
+const PERCHAR_CAP = 100;     // 캐릭터별 데이터 최대 보관 개수 (안전망)
+const HOUSE_HISTORY_CAP = 50; // 캐릭터당 거주 이력 최대 보관 개수 (안전망)
+
+function pruneOrphanedData() {
+    const s = getSettings();
+    const ctx = SillyTavern.getContext();
+    const cache = s.perChar || {};
+    let changed = false;
+
+    // 1) 더 이상 존재하지 않는 캐릭터(avatar)의 데이터 삭제 — 'default'(페르소나만 있을 때 폴백 키)는 유지
+    const validKeys = new Set((ctx.characters || []).map((c) => c.avatar));
+    validKeys.add('default');
+    for (const key of Object.keys(cache)) {
+        if (!validKeys.has(key)) {
+            delete cache[key];
+            changed = true;
+        }
+    }
+
+    // 2) 안전망 — 그래도 너무 많이 쌓이면 가장 오래 안 건드린 것부터 삭제
+    const entries = Object.entries(cache);
+    if (entries.length > PERCHAR_CAP) {
+        entries.sort((a, b) => (a[1]?.updatedAt || 0) - (b[1]?.updatedAt || 0));
+        entries.slice(0, entries.length - PERCHAR_CAP).forEach(([key]) => delete cache[key]);
+        changed = true;
+    }
+
+    // 3) 거주 이력 배열 캡 (무한 누적 방지 — 유저가 원하는 "삭제 없이 누적"은 유지하되 상한선만 둠)
+    for (const charData of Object.values(cache)) {
+        if (Array.isArray(charData?.house?.history) && charData.house.history.length > HOUSE_HISTORY_CAP) {
+            charData.house.history = charData.house.history.slice(0, HOUSE_HISTORY_CAP);
+            changed = true;
+        }
+    }
+
+    if (changed) { s.perChar = cache; save(); console.log(`[${MODULE_NAME}] 고아 데이터 정리 완료 (${Object.keys(cache).length}개 캐릭터 유지)`); }
 }
 
 // ─── 포인트 시스템 ──────────────────────────
@@ -130,16 +205,23 @@ function spendPoints(amount) {
     toastr.warning('자체 포인트가 부족해요. 챗틀로얄 포인트가 있다면 설정에서 동기화해보세요.');
     return false;
 }
-// 챗틀로얄 포인트를 자체 포인트로 가져오기 (동기화 — 챗틀로얄 쪽 포인트는 그만큼 차감됨)
+// 챗틀로얄 포인트를 자체 포인트로 가져오기 — 전부가 아니라 원하는 만큼만 입력해서 가져옴
 function syncChatleRoyalPoints() {
     const ctx = SillyTavern.getContext();
     const cr = ctx.extensionSettings?.[CHATLEROYAL_KEY];
-    const amount = (cr && typeof cr.points === 'number') ? cr.points : 0;
-    if (amount <= 0) { toastr.info('가져올 챗틀로얄 포인트가 없어요'); return 0; }
+    const available = (cr && typeof cr.points === 'number') ? cr.points : 0;
+    if (available <= 0) { toastr.info('가져올 챗틀로얄 포인트가 없어요'); return 0; }
+
+    const input = window.prompt(`챗틀로얄 보유 포인트: ${available}P\n가져올 만큼 입력하세요 (최대 ${available}):`, String(available));
+    if (input === null) return 0; // 취소
+    const amount = Math.floor(Number(input));
+    if (!Number.isFinite(amount) || amount <= 0) { toastr.warning('1 이상의 숫자를 입력해주세요'); return 0; }
+    if (amount > available) { toastr.warning(`최대 ${available}P까지만 가져올 수 있어요`); return 0; }
+
     const s = getSettings();
     s.points += amount;
     s.lifetimePoints += amount;
-    cr.points = 0;
+    cr.points = available - amount;
     save();
     toastr.success(`챗틀로얄에서 ${amount}P 가져왔어요!`);
     return amount;
@@ -234,7 +316,8 @@ async function exportLorebook() {
     const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     if (!data.house.current) return null;
-    return await callAI(buildLorebookExportPrompt(data.house.current, lang));
+    const { _worldClass, _generatedAt, ...cardForExport } = data.house.current; // 메타정보는 줄글 변환 대상에서 제외
+    return await callAI(buildLorebookExportPrompt(cardForExport, lang));
 }
 
 // 클립보드 쓰기 — 비동기 AI 호출 후라 유저 제스처(transient activation)가 만료돼서
@@ -282,20 +365,27 @@ function showManualCopyModal(text) {
 }
 
 // ─── 아이템 풀 ──────────────────────────────
-async function generateItemPool(spaceKey) {
+async function generateItemPool(spaceKey, isReroll = false) {
     const space = SPACES.find((s) => s.key === spaceKey);
     const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
-    const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, space.label, lang)));
+    const existing = data.spaces[spaceKey];
+    const pinned = (isReroll && existing && !existing.empty) ? existing.items.filter((it) => it.pinned) : [];
+    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })) };
+
+    const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, space.label, lang, opts)));
     if (!result) return null;
+
     if (result.empty) {
         data.spaces[spaceKey] = { empty: true, emptyReason: result.emptyReason };
     } else {
-        data.spaces[spaceKey] = {
-            empty: false,
-            items: result.items.slice(0, ITEM_CAP).map((it) => ({ ...it, unlocked: it.unlockCost === 0, pinned: false, createdAt: Date.now() })),
-        };
+        const newItems = (result.items || []).map((it) => {
+            const unlockCost = isReroll ? Math.max(5, it.unlockCost || 10) : (it.unlockCost || 0);
+            return { ...it, id: uid(), unlockCost, unlocked: isReroll ? false : unlockCost === 0, pinned: false, injected: false, createdAt: Date.now() };
+        });
+        const finalItems = isReroll ? [...pinned, ...newItems].slice(0, ITEM_CAP) : newItems.slice(0, ITEM_CAP);
+        data.spaces[spaceKey] = { empty: false, items: finalItems };
     }
     save();
     return data.spaces[spaceKey];
@@ -315,15 +405,65 @@ function togglePin(spaceKey, idx) {
     item.pinned = !item.pinned;
     save();
 }
-async function generateFoodList(subtype) {
+async function generateFoodList(subtype, isReroll = false) {
     const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
-    const result = parseJSON(await callAI(buildFoodListPrompt('', worldClass, subtype, lang)));
+    const existing = data[subtype];
+    const pinned = (isReroll && existing && !existing.empty) ? existing.list.filter((it) => it.pinned) : [];
+    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name })) };
+
+    const result = parseJSON(await callAI(buildFoodListPrompt('', worldClass, subtype, lang, opts)));
     if (!result) return null;
-    data[subtype] = result.empty ? { empty: true } : { empty: false, list: result.list };
+
+    if (result.empty) {
+        data[subtype] = { empty: true };
+    } else {
+        const newList = (result.list || []).map((it) => {
+            const unlockCost = isReroll ? (it.unlockCost > 0 ? it.unlockCost : 10) : (it.unlockCost || 0);
+            return { ...it, id: uid(), unlockCost, unlocked: unlockCost === 0, pinned: false, injected: false };
+        });
+        data[subtype] = { empty: false, list: isReroll ? [...pinned, ...newList] : newList };
+    }
     save();
     return data[subtype];
+}
+function unlockFoodItem(subtype, idx) {
+    const item = getCharData()[subtype]?.list?.[idx];
+    if (!item || item.unlocked) return false;
+    if (!spendPoints(item.unlockCost)) return false;
+    item.unlocked = true;
+    save();
+    return true;
+}
+function toggleFoodPin(subtype, idx) {
+    const item = getCharData()[subtype]?.list?.[idx];
+    if (!item) return;
+    item.pinned = !item.pinned;
+    save();
+}
+
+// ─── 주입 토글 ──────────────────────────────
+function toggleItemInjection(item) {
+    if (!item.id) item.id = uid(); // 업데이트 이전에 생성된 아이템 대비 안전장치
+    item.injected = !item.injected;
+    if (item.injected) setInjection(`csr_inj_item_${item.id}`, buildItemInjectionText(item));
+    else clearInjection(`csr_inj_item_${item.id}`);
+    save();
+    return item.injected;
+}
+function toggleFoodBundleInjection(subtype) {
+    const data = getCharData();
+    const flagKey = `${subtype}BundleInjected`;
+    data[flagKey] = !data[flagKey];
+    if (data[flagKey]) {
+        const list = (data[subtype]?.list || []).filter((it) => it.unlocked);
+        setInjection(`csr_inj_food_${subtype}`, buildFoodBundleInjectionText(subtype, list));
+    } else {
+        clearInjection(`csr_inj_food_${subtype}`);
+    }
+    save();
+    return data[flagKey];
 }
 
 // ─── 로딩 표시 (챗씨부인 방식 재사용) ───────
@@ -336,6 +476,14 @@ function showLoading(targetId, msg) {
 }
 
 // ─── 렌더링: 거주지 카드 ────────────────────
+function formatWorldClass(wc) {
+    if (!wc) return '-';
+    const labels = { REALISTIC: '현실', FANTASY: '판타지', HISTORICAL: '시대극', MAJOR_IP: '메이저IP' };
+    const base = labels[wc.category] || wc.category || '-';
+    if (wc.category === 'MAJOR_IP' && wc.subtype) return `${base} (${wc.subtype})`;
+    if (wc.subtype) return `${base} · ${wc.subtype}`;
+    return base;
+}
 function deedRow(label, value) {
     return `<div style="border-bottom:1px dashed ${DEED.line};padding-bottom:6px">
         <div style="font-size:9px;color:${DEED.gold};font-weight:800;letter-spacing:.4px;text-transform:uppercase">${esc(label)}</div>
@@ -372,6 +520,7 @@ function renderDeed() {
     <div style="background:${DEED.bgCard};border:1px solid ${DEED.line};border-radius:14px;padding:18px 16px;position:relative;overflow:hidden">
         <h3 style="font-family:'Georgia',serif;margin:0 0 12px;color:${DEED.ink};font-size:16px">${esc(charName)}의 거처</h3>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 12px">
+            ${deedRow('세계관', formatWorldClass(card._worldClass))}
             ${deedRow('거주형태', card.residenceType)}
             ${deedRow('가격', card.price)}
             ${deedRow('건물유형', card.buildingType)}
@@ -420,15 +569,19 @@ function renderFoodList(subtype) {
     const slot = getCharData()[subtype];
     if (!slot) return `<div style="text-align:center;color:${CUTE.text};opacity:.6;font-size:12px;padding:20px">불러오는 중...</div>`;
     if (slot.empty) return `<div style="text-align:center;color:${CUTE.text};opacity:.6;font-size:12px;padding:20px">이 시대/세계관엔 해당 공간이 없어요.</div>`;
-    return slot.list.map((f, idx) => `
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px dashed #f1d8e0">
-            <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(f.emoji)} ${esc(f.name)}</div>
-            <div style="font-size:10px;color:#9b8aa0;font-weight:700">
-                ${f.unlockCost > 0
-                    ? `<span class="csr-food-unlock" data-idx="${idx}" data-subtype="${subtype}" style="font-size:9px;background:${CUTE.yellow};padding:2px 7px;border-radius:8px;font-weight:800;color:${CUTE.text};cursor:pointer">${f.unlockCost}P 해금</span>`
-                    : esc(f.qty)}
-            </div>
-        </div>`).join('');
+    return slot.list.map((f, idx) => {
+        if (!f.unlocked) {
+            return `<div class="csr-food-row" data-action="unlock" data-idx="${idx}" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px dashed #f1d8e0;cursor:pointer">
+                <div style="font-size:12px;color:${CUTE.text};font-weight:700">🔒 ???</div>
+                <div style="font-size:9px;background:${CUTE.yellow};padding:2px 7px;border-radius:8px;font-weight:800;color:${CUTE.text}">${f.unlockCost}P 해금</div>
+            </div>`;
+        }
+        const clickable = !!f.tmi;
+        return `<div class="csr-food-row" ${clickable ? `data-action="open" data-idx="${idx}"` : ''} style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px dashed #f1d8e0;${clickable ? 'cursor:pointer' : ''}">
+            <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(f.emoji)} ${esc(f.name)} ${f.pinned ? '📌' : ''}</div>
+            <div style="font-size:10px;color:#9b8aa0;font-weight:700">${esc(f.qty)}</div>
+        </div>`;
+    }).join('');
 }
 
 // ─── 렌더링: 탭 본문 ────────────────────────
@@ -455,6 +608,9 @@ function renderItemsTab() {
 function renderTab2Body() {
     if (state.currentSpace === 'kitchen') {
         if (state.foodSubview) {
+            const data = getCharData();
+            const bundleOn = !!data[`${state.foodSubview}BundleInjected`];
+            const hasSlot = !!data[state.foodSubview];
             return `
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
                 <button id="csr-back-btn" style="border:none;background:rgba(0,0,0,.06);border-radius:10px;padding:7px 11px;font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">‹ 뒤로</button>
@@ -464,7 +620,12 @@ function renderTab2Body() {
                     <button class="csr-food-switch" data-sub="fridge" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'fridge' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">냉장고</button>
                 </div>
             </div>
-            <div style="background:#fff;border-radius:14px;padding:4px 13px">${renderFoodList(state.foodSubview)}</div>`;
+            <div style="background:#fff;border-radius:14px;padding:4px 13px;margin-bottom:10px">${renderFoodList(state.foodSubview)}</div>
+            ${hasSlot ? `
+            <div style="display:flex;gap:8px">
+                <button id="csr-food-reroll-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 새로채우기</button>
+                <button id="csr-food-bundle-inject-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${bundleOn ? CUTE.yellow : CUTE.lav};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${bundleOn ? '✅ 주입중' : '📡 목록 주입하기'}</button>
+            </div>` : ''}`;
         }
         return `
         <div style="display:flex;gap:8px;margin-bottom:12px">
@@ -479,37 +640,47 @@ function renderTab2Body() {
         <span style="font-family:Georgia,serif;color:${CUTE.text};font-weight:700;font-size:14px">${getTotalPoints()} P</span>
     </div>
     ${!slot ? `<button id="csr-load-space-btn" style="width:100%;padding:10px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer;margin-bottom:10px">불러오기</button>` : ''}
-    <div id="csr-item-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px">${renderItemGrid(state.currentSpace)}</div>`;
+    <div id="csr-item-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:10px">${renderItemGrid(state.currentSpace)}</div>
+    ${slot ? `<button id="csr-room-reroll-btn" style="width:100%;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 다시 채우기 (핀 제외, 새로 채워지는 건 항상 잠금)</button>` : ''}`;
 }
 
 // ─── 모달 ───────────────────────────────────
-function showItemModal(spaceKey, idx) {
-    const item = getCharData().spaces[spaceKey].items[idx];
+// kind: 'room' | 'food'
+function showItemModal(kind, containerKey, idx) {
+    const data = getCharData();
+    const item = kind === 'room' ? data.spaces[containerKey].items[idx] : data[containerKey].list[idx];
     document.getElementById('csr-modal')?.remove();
 
     // 챗틀로얄 방식: flex 중앙정렬 대신 창 크기 기준으로 top/left를 미리 계산해서 고정 배치
     // (모바일 키보드 등으로 뷰포트 높이가 바뀌어도 모달이 다시 중앙정렬되며 위로 솟구치는 문제 방지)
     const mw = Math.min(300, window.innerWidth * 0.9);
     const ml = Math.max(10, (window.innerWidth - mw) / 2);
-    const mt = Math.max(10, Math.min(window.innerHeight * 0.15, window.innerHeight - 280));
+    const mt = Math.max(10, Math.min(window.innerHeight * 0.15, window.innerHeight - 320));
 
     const modal = document.createElement('div');
     modal.id = 'csr-modal';
     modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;background:#fff;border-radius:18px;padding:20px;font-family:system-ui;z-index:10500;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
     modal.innerHTML = `
         <button id="csr-modal-close-x" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:14px;color:${CUTE.text};opacity:.6">✕</button>
-        <div style="font-weight:800;font-size:15px;color:${CUTE.text};padding-right:18px">${esc(item.brand)}</div>
-        <div style="font-weight:800;color:${DEED.stamp};margin:5px 0 10px;font-size:13px">${esc(item.price)}</div>
+        <div style="font-weight:800;font-size:15px;color:${CUTE.text};padding-right:18px">${kind === 'room' ? esc(item.brand) : `${esc(item.emoji)} ${esc(item.name)}`}</div>
+        ${kind === 'room' ? `<div style="font-weight:800;color:${DEED.stamp};margin:5px 0 10px;font-size:13px">${esc(item.price)}</div>` : `<div style="font-size:10px;color:#9b8aa0;margin:4px 0 10px">${esc(item.qty || '')}</div>`}
         <div style="font-size:11px;color:#555;line-height:1.55;background:#FFF7E8;border-radius:10px;padding:10px">${esc(item.tmi)}</div>
         <button id="csr-modal-pin" style="margin-top:9px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.yellow};font-weight:800;color:${CUTE.text};cursor:pointer;font-size:11px">${item.pinned ? '📌 고정 해제' : '📌 고정하기'}</button>
+        <button id="csr-modal-inject" style="margin-top:7px;width:100%;padding:9px;border:none;border-radius:12px;background:${item.injected ? CUTE.yellow : CUTE.lav};color:${CUTE.text};font-weight:800;cursor:pointer;font-size:11px">${item.injected ? '✅ 주입중 (눌러서 해제)' : '📡 주입하기'}</button>
         <button id="csr-modal-close" style="margin-top:7px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.text};color:#fff;font-weight:800;cursor:pointer;font-size:12px">닫기</button>
     `;
     document.body.appendChild(modal);
     document.getElementById('csr-modal-close')?.addEventListener('click', () => modal.remove());
     document.getElementById('csr-modal-close-x')?.addEventListener('click', () => modal.remove());
     document.getElementById('csr-modal-pin')?.addEventListener('click', () => {
-        togglePin(spaceKey, idx);
+        if (kind === 'room') togglePin(containerKey, idx);
+        else toggleFoodPin(containerKey, idx);
         renderBody();
+        modal.remove();
+    });
+    document.getElementById('csr-modal-inject')?.addEventListener('click', () => {
+        const nowInjected = toggleItemInjection(item);
+        toastr.success(nowInjected ? '주입을 시작했어요 (다음 턴부터 반영)' : '주입을 해제했어요');
         modal.remove();
     });
 }
@@ -585,14 +756,43 @@ function bindTab2Body() {
     document.getElementById('csr-fridge-btn')?.addEventListener('click', () => openFoodSubview('fridge'));
     document.getElementById('csr-back-btn')?.addEventListener('click', () => { state.foodSubview = null; document.getElementById('csr-tab2-body').innerHTML = renderTab2Body(); bindTab2Body(); });
     document.querySelectorAll('.csr-food-switch').forEach((btn) => btn.addEventListener('click', () => openFoodSubview(btn.dataset.sub)));
-    document.querySelectorAll('.csr-food-unlock').forEach((btn) => btn.addEventListener('click', () => {
-        const subtype = btn.dataset.subtype, idx = btn.dataset.idx;
-        const item = getCharData()[subtype].list[idx];
-        if (spendPoints(item.unlockCost)) { item.unlockCost = 0; save(); document.getElementById('csr-tab2-body').innerHTML = renderTab2Body(); bindTab2Body(); }
+
+    document.querySelectorAll('.csr-food-row').forEach((el) => el.addEventListener('click', () => {
+        const idx = parseInt(el.dataset.idx);
+        const action = el.dataset.action;
+        if (action === 'unlock') {
+            if (unlockFoodItem(state.foodSubview, idx)) {
+                document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+                bindTab2Body();
+            }
+        } else if (action === 'open') {
+            showItemModal('food', state.foodSubview, idx);
+        }
     }));
+
+    document.getElementById('csr-food-reroll-btn')?.addEventListener('click', async () => {
+        const subtype = state.foodSubview;
+        document.getElementById('csr-tab2-body').innerHTML = `<div style="text-align:center;padding:20px;color:${CUTE.text}">다시 채우는 중...</div>`;
+        try { await generateFoodList(subtype, true); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
+        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        bindTab2Body();
+    });
+    document.getElementById('csr-food-bundle-inject-btn')?.addEventListener('click', () => {
+        const nowOn = toggleFoodBundleInjection(state.foodSubview);
+        toastr.success(nowOn ? '목록 주입을 시작했어요 (다음 턴부터 반영)' : '목록 주입을 해제했어요');
+        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        bindTab2Body();
+    });
+
     document.getElementById('csr-load-space-btn')?.addEventListener('click', async () => {
         document.getElementById('csr-item-grid').innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">불러오는 중...</div>`;
-        try { await generateItemPool(state.currentSpace); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
+        try { await generateItemPool(state.currentSpace, false); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
+        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        bindTab2Body();
+    });
+    document.getElementById('csr-room-reroll-btn')?.addEventListener('click', async () => {
+        document.getElementById('csr-item-grid').innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">다시 채우는 중...</div>`;
+        try { await generateItemPool(state.currentSpace, true); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
         document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
         bindTab2Body();
     });
@@ -604,7 +804,7 @@ function bindTab2Body() {
                 bindTab2Body();
             }
         } else {
-            showItemModal(state.currentSpace, idx);
+            showItemModal('room', state.currentSpace, idx);
         }
     }));
 }
@@ -614,7 +814,7 @@ async function openFoodSubview(subtype) {
     bindTab2Body();
     const data = getCharData();
     if (!data[subtype]) {
-        try { await generateFoodList(subtype); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
+        try { await generateFoodList(subtype, false); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
         document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
         bindTab2Body();
     }
@@ -661,6 +861,8 @@ function createFloatingPanel() {
 
 function openFloat() {
     if (document.getElementById('csr-float')) return;
+    pruneOrphanedData();
+    reapplyInjections();
     injectCSS();
     document.body.insertAdjacentHTML('beforeend', createFloatingPanel());
     const panel = document.getElementById('csr-float');
@@ -716,7 +918,11 @@ function renderSettingsTabInner() {
             <div style="font-size:10px;color:${DEED.ink};opacity:.7;margin-top:3px">⏰ 3시간마다 자동으로 10P씩 적립됩니다 (앱을 꺼두었어도 다음 접속 시 경과 시간만큼 한꺼번에 적립).</div>
             <button id="csr-sync-btn" style="width:100%;margin-top:8px;padding:9px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer">🔄 챗틀로얄 포인트 동기화</button>
         </div>
-        <button id="csr-reset-btn" style="width:100%;padding:9px;border:1px solid ${DEED.stamp};border-radius:12px;background:#fff;color:${DEED.stamp};font-weight:800;font-size:12px;cursor:pointer">🗑 전체 초기화</button>
+        <div style="border-top:1px solid ${DEED.line};padding-top:10px;display:flex;flex-direction:column;gap:6px">
+            <button id="csr-clear-history-btn" style="width:100%;padding:9px;border:1px solid ${DEED.line};border-radius:12px;background:#fff;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">🗑 거주 이력만 삭제</button>
+            <button id="csr-reset-btn" style="width:100%;padding:9px;border:1px solid ${DEED.line};border-radius:12px;background:#fff;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">🗑 데이터 초기화 (포인트는 보존)</button>
+            <button id="csr-full-wipe-btn" style="width:100%;padding:9px;border:1px solid ${DEED.stamp};border-radius:12px;background:#fff;color:${DEED.stamp};font-weight:800;font-size:11px;cursor:pointer">⚠️ 완전 삭제 (포인트 포함 — 확장 제거 전용)</button>
+        </div>
     </div>`;
 }
 function bindSettingsTabInner() {
@@ -735,13 +941,34 @@ function bindSettingsTabInner() {
         syncChatleRoyalPoints();
         renderBody();
     });
+    document.getElementById('csr-clear-history-btn')?.addEventListener('click', async () => {
+        const { Popup, POPUP_RESULT } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm('거주 이력 삭제', '현재 캐릭터의 거주 이력만 삭제합니다 (현재 집 정보/소지품/포인트는 그대로 유지). 진행할까요?');
+        if (ok === POPUP_RESULT.AFFIRMATIVE) {
+            getCharData().house.history = [];
+            save();
+            toastr.success('거주 이력 삭제 완료');
+            renderBody();
+        }
+    });
     document.getElementById('csr-reset-btn')?.addEventListener('click', async () => {
         const { Popup, POPUP_RESULT } = SillyTavern.getContext();
-        const ok = await Popup.show.confirm('전체 초기화', '챗씨부동산의 모든 데이터(포인트/거주지/소지품)를 초기화합니다. 되돌릴 수 없습니다. 진행할까요?');
+        const ok = await Popup.show.confirm('데이터 초기화', '모든 캐릭터의 거주지/소지품 데이터를 초기화합니다. 포인트와 설정(프로필/언어 등)은 그대로 유지됩니다. 되돌릴 수 없습니다. 진행할까요?');
+        if (ok === POPUP_RESULT.AFFIRMATIVE) {
+            const s = getSettings();
+            s.perChar = {};
+            save();
+            toastr.success('데이터 초기화 완료 (포인트는 유지됨)');
+            renderBody();
+        }
+    });
+    document.getElementById('csr-full-wipe-btn')?.addEventListener('click', async () => {
+        const { Popup, POPUP_RESULT } = SillyTavern.getContext();
+        const ok = await Popup.show.confirm('완전 삭제', '포인트를 포함한 챗씨부동산의 모든 데이터를 완전히 삭제합니다. 확장을 제거하기 전에만 사용하세요. 되돌릴 수 없습니다. 정말 진행할까요?');
         if (ok === POPUP_RESULT.AFFIRMATIVE) {
             SillyTavern.getContext().extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
             save();
-            toastr.success('초기화 완료');
+            toastr.success('완전 삭제 완료');
             renderBody();
         }
     });
@@ -751,6 +978,7 @@ function bindSettingsTabInner() {
 export async function onActivate() {
     console.log(`[${MODULE_NAME}] 활성화`);
     checkRefill();
+    pruneOrphanedData();
 
     if (!document.getElementById('csr-wand-btn')) {
         const html = `<div id="csr-wand-btn" title="챗씨부동산" style="cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:5px;font-size:13px">
