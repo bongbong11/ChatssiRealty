@@ -1,0 +1,116 @@
+/* style.css — 챗씨부동산 */
+/* 디자인 토큰 출처: design-tokens.md (목업에서 확정된 컨셉) */
+/* 전부 .csr- 접두사로 네임스페이스 처리 — ST 전역 스타일과 충돌 방지 */
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Baloo+2:wght@500;700&family=Nunito:wght@400;600;700;800&display=swap');
+
+.csr-app{
+  width:100%; max-width:420px; margin:0 auto;
+  border-radius:20px; overflow:hidden;
+  background:#F7F3EA;
+  transition:background .45s ease;
+  font-family:'Nunito',sans-serif;
+}
+.csr-app.csr-cute{ background:#FFE8EF; }
+
+.csr-appbar{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px 6px; }
+.csr-title{ font-family:'Fraunces',serif; font-weight:700; font-size:18px; color:#2B3A55; transition:.3s; }
+.csr-app.csr-cute .csr-title{ font-family:'Baloo 2',sans-serif; color:#3D2C3D; }
+
+.csr-tabs{ display:flex; gap:6px; padding:0 14px 12px; }
+.csr-tab-btn{
+  flex:1; padding:9px 0; border:none; border-radius:14px;
+  font-family:'Nunito'; font-weight:800; font-size:12px;
+  cursor:pointer; background:rgba(0,0,0,.05); color:#2B3A55;
+}
+.csr-tab-btn.csr-active{ background:#2B3A55; color:#F7F3EA; }
+.csr-app.csr-cute .csr-tab-btn{ color:#3D2C3D; background:rgba(255,255,255,.55); }
+.csr-app.csr-cute .csr-tab-btn.csr-active{ background:#3D2C3D; color:#FFE8EF; }
+
+.csr-panel{ padding:0 14px 22px; }
+.csr-hidden{ display:none !important; }
+
+/* TAB1 : 부동산 문서 */
+.csr-field-label{ font-size:11px; font-weight:800; color:#2B3A55; opacity:.65; margin-bottom:6px; }
+.csr-chip-row-cat{ display:flex; gap:6px; margin-bottom:10px; overflow-x:auto; }
+.csr-chip-cat{ flex:none; padding:7px 12px; border-radius:999px; background:#fff; border:1px solid #D8D2C2; font-size:11px; font-weight:800; color:#2B3A55; cursor:pointer; }
+.csr-chip-cat.csr-active{ background:#2B3A55; color:#F7F3EA; border-color:#2B3A55; }
+.csr-ref-input{
+  width:100%; border:1px solid #D8D2C2; background:#fff;
+  border-radius:10px; padding:10px 12px; font-family:'Nunito'; font-size:13px;
+  color:#2B3A55; margin-bottom:10px;
+}
+.csr-generate-btn{
+  width:100%; padding:12px; border:none; border-radius:12px;
+  background:#2B3A55; color:#F7F3EA; font-weight:800;
+  font-family:'Nunito'; font-size:13px; cursor:pointer; margin-bottom:18px;
+}
+.csr-generate-btn:disabled{ opacity:.5; cursor:default; }
+.csr-deed{ background:#fff; border:1px solid #D8D2C2; border-radius:14px; padding:18px 16px; position:relative; overflow:hidden; }
+.csr-deed::before{
+  content:'DEED'; position:absolute; top:14px; right:-26px; transform:rotate(35deg);
+  font-family:'Fraunces'; font-weight:700; font-size:10px; color:#B33A3A;
+  border:2px solid #B33A3A; padding:2px 28px; opacity:.5; letter-spacing:3px;
+}
+.csr-deed h3{ font-family:'Fraunces'; margin:0 0 12px; color:#2B3A55; font-size:16px; font-weight:600; }
+.csr-deed-grid{ display:grid; grid-template-columns:1fr 1fr; gap:10px 12px; }
+.csr-deed-row{ border-bottom:1px dashed #D8D2C2; padding-bottom:6px; }
+.csr-deed-row .csr-k{ font-size:9px; color:#C9A227; font-weight:800; letter-spacing:.4px; text-transform:uppercase; }
+.csr-deed-row .csr-v{ font-size:12px; color:#2B3A55; font-weight:700; margin-top:2px; word-break:break-word; }
+.csr-story-box{ margin-top:14px; background:#FBF8F1; border:1px dashed #D8D2C2; border-radius:12px; padding:12px 13px; }
+.csr-story-label{ font-size:10px; font-weight:800; color:#C9A227; margin-bottom:5px; }
+.csr-story-box p{ margin:0; font-size:11px; color:#2B3A55; line-height:1.6; opacity:.9; }
+.csr-move-btn{ width:100%; margin-top:14px; padding:10px; border:none; border-radius:12px; background:#2B3A55; color:#F7F3EA; font-weight:800; font-size:12px; cursor:pointer; }
+.csr-lore-btn{ width:100%; margin-top:10px; padding:10px; border:1px dashed #C9A227; border-radius:12px; background:#FBF6E8; color:#8a6d1a; font-weight:800; font-size:11px; cursor:pointer; }
+.csr-toast{ text-align:center; font-size:10px; color:#2B3A55; margin-top:7px; font-weight:700; opacity:0; transition:opacity .3s; }
+.csr-toast.csr-show{ opacity:1; }
+.csr-accordion{ margin-top:12px; border-top:1px solid #D8D2C2; padding-top:9px; }
+.csr-accordion summary{ font-size:11px; font-weight:800; color:#2B3A55; cursor:pointer; }
+.csr-accordion ul{ margin:8px 0 0; padding-left:16px; font-size:11px; color:#2B3A55; opacity:.8; line-height:1.6; }
+
+/* TAB2 : 귀여운 인벤토리 */
+.csr-chip-row{ display:flex; gap:6px; overflow-x:auto; padding-bottom:10px; }
+.csr-chip{ flex:none; padding:7px 12px; border-radius:999px; background:#fff; font-size:11px; font-weight:800; color:#3D2C3D; cursor:pointer; border:2px solid transparent; white-space:nowrap; }
+.csr-chip.csr-active{ background:#C9B8FF; border-color:#3D2C3D; }
+.csr-kitchen-extra{ display:flex; gap:8px; margin-bottom:10px; }
+.csr-kitchen-extra button{ flex:1; padding:9px; border-radius:12px; border:none; background:#BFEFDB; font-weight:800; font-size:11px; color:#3D2C3D; cursor:pointer; }
+.csr-points-bar{ display:flex; align-items:center; justify-content:space-between; background:#fff; border-radius:14px; padding:10px 13px; margin-bottom:10px; }
+.csr-points-bar .csr-label{ font-size:11px; color:#3D2C3D; font-weight:700; }
+.csr-points-bar .csr-pts{ font-family:'Baloo 2'; color:#3D2C3D; font-weight:700; font-size:14px; }
+.csr-item-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }
+.csr-item-slot{ aspect-ratio:1; border-radius:14px; background:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; cursor:pointer; box-shadow:0 3px 0 rgba(0,0,0,.05); }
+.csr-item-slot.csr-locked{ background:repeating-linear-gradient(45deg,#fff,#fff 6px,#f6eef5 6px,#f6eef5 12px); cursor:pointer; }
+.csr-item-slot .csr-emoji{ font-size:24px; }
+.csr-item-slot .csr-label{ font-size:9px; color:#3D2C3D; font-weight:800; margin-top:3px; text-align:center; padding:0 4px; line-height:1.2; }
+.csr-item-slot .csr-lockcost{ position:absolute; bottom:5px; font-size:9px; background:#FFE177; border-radius:8px; padding:2px 6px; font-weight:800; color:#3D2C3D; }
+.csr-item-slot .csr-pin{ position:absolute; top:4px; right:4px; font-size:10px; }
+.csr-empty-note{ text-align:center; font-size:12px; color:#3D2C3D; opacity:.6; padding:30px 10px; }
+
+/* 팬트리/냉장고 서브뷰 */
+.csr-subview-header{ display:flex; align-items:center; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+.csr-back-btn{ border:none; background:rgba(0,0,0,.06); border-radius:10px; padding:7px 11px; font-weight:800; font-size:11px; color:#3D2C3D; cursor:pointer; }
+.csr-subview-title{ font-family:'Baloo 2'; font-size:15px; color:#3D2C3D; font-weight:700; }
+.csr-subview-toggle{ display:flex; gap:6px; margin-left:auto; }
+.csr-subview-toggle button{ border:none; padding:6px 12px; border-radius:999px; font-size:10px; font-weight:800; background:#fff; color:#3D2C3D; cursor:pointer; opacity:.55; }
+.csr-subview-toggle button.csr-active{ background:#C9B8FF; opacity:1; }
+.csr-food-list{ background:#fff; border-radius:14px; padding:4px 13px; margin-bottom:10px; }
+.csr-food-row{ display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px dashed #f1d8e0; }
+.csr-food-row:last-child{ border-bottom:none; }
+.csr-food-row .csr-fname{ font-size:12px; color:#3D2C3D; font-weight:700; }
+.csr-food-row .csr-fqty{ font-size:10px; color:#9b8aa0; font-weight:700; }
+.csr-food-row .csr-flock{ font-size:9px; background:#FFE177; padding:2px 7px; border-radius:8px; font-weight:800; color:#3D2C3D; cursor:pointer; }
+
+/* 모달 */
+.csr-modal-overlay{ position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:9999; padding:20px; }
+.csr-modal-card{ width:100%; max-width:300px; background:#fff; border-radius:18px; padding:20px; font-family:'Nunito'; }
+.csr-modal-card .csr-brand{ font-family:'Baloo 2'; font-size:15px; color:#3D2C3D; line-height:1.3; }
+.csr-modal-card .csr-price{ font-weight:800; color:#B33A3A; margin:5px 0 10px; font-size:13px; }
+.csr-modal-card .csr-tmi{ font-size:11px; color:#555; line-height:1.55; background:#FFF7E8; border-radius:10px; padding:10px; }
+.csr-modal-card .csr-pinbtn{ margin-top:9px; width:100%; padding:9px; border:none; border-radius:12px; background:#FFE177; font-weight:800; color:#3D2C3D; cursor:pointer; font-size:11px; }
+.csr-modal-card .csr-closebtn{ margin-top:7px; width:100%; padding:9px; border:none; border-radius:12px; background:#3D2C3D; color:#fff; font-weight:800; cursor:pointer; font-size:12px; }
+
+/* 설정 패널 */
+.csr-settings-row{ display:flex; align-items:center; justify-content:space-between; margin:8px 0; gap:8px; }
+.csr-settings-row label{ font-size:12px; flex:1; }
+.csr-settings-row select, .csr-settings-row input{ flex:1; }
+.csr-reset-btn{ background:#B33A3A; color:#fff; border:none; border-radius:8px; padding:6px 12px; font-size:12px; cursor:pointer; }

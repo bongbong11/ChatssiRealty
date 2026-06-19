@@ -1,0 +1,12 @@
+{
+  "display_name": "챗씨부동산",
+  "loading_order": 10,
+  "requires": [],
+  "optional": ["Chatleroyal"],
+  "js": "index.js",
+  "css": "style.css",
+  "author": "봉봉",
+  "version": "0.1.0",
+  "homePage": "https://github.com/bongbong11/chatssi-realestate",
+  "auto_update": false
+}
