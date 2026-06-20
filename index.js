@@ -784,40 +784,44 @@ function renderItemsTab() {
     </div>`;
 }
 function renderTab2Body() {
-    if (state.currentSpace === 'kitchen') {
-        if (state.foodSubview) {
-            const data = getCharData();
-            const bundleOn = !!data[`${state.foodSubview}BundleInjected`];
-            const hasSlot = !!data[state.foodSubview];
-            const pantryD = getFoodSubDisplay('pantry');
-            const fridgeD = getFoodSubDisplay('fridge');
-            const curD = state.foodSubview === 'pantry' ? pantryD : fridgeD;
-            return `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-                <button id="csr-back-btn" style="border:none;background:rgba(0,0,0,.06);border-radius:10px;padding:7px 11px;font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">‹ 뒤로</button>
-                <div style="font-size:14px;font-weight:800;color:${CUTE.text}">${esc(curD.emoji)} ${esc(curD.label)}</div>
-                <div style="display:flex;gap:6px;margin-left:auto">
-                    <button class="csr-food-switch" data-sub="pantry" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'pantry' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">${esc(pantryD.label)}</button>
-                    <button class="csr-food-switch" data-sub="fridge" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'fridge' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">${esc(fridgeD.label)}</button>
-                </div>
+    if (state.currentSpace === 'kitchen' && state.foodSubview) {
+        const data = getCharData();
+        const bundleOn = !!data[`${state.foodSubview}BundleInjected`];
+        const hasSlot = !!data[state.foodSubview];
+        const pantryD = getFoodSubDisplay('pantry');
+        const fridgeD = getFoodSubDisplay('fridge');
+        const curD = state.foodSubview === 'pantry' ? pantryD : fridgeD;
+        return `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <button id="csr-back-btn" style="border:none;background:rgba(0,0,0,.06);border-radius:10px;padding:7px 11px;font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">‹ 뒤로</button>
+            <div style="font-size:14px;font-weight:800;color:${CUTE.text}">${esc(curD.emoji)} ${esc(curD.label)}</div>
+            <div style="display:flex;gap:6px;margin-left:auto">
+                <button class="csr-food-switch" data-sub="pantry" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'pantry' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">${esc(pantryD.label)}</button>
+                <button class="csr-food-switch" data-sub="fridge" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'fridge' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">${esc(fridgeD.label)}</button>
             </div>
-            <div style="background:#fff;border-radius:14px;padding:4px 13px;margin-bottom:10px">${renderFoodList(state.foodSubview)}</div>
-            ${hasSlot ? `
-            <div style="display:flex;gap:8px">
-                <button id="csr-food-reroll-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 새로채우기</button>
-                <button id="csr-food-bundle-inject-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${bundleOn ? CUTE.yellow : CUTE.lav};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${bundleOn ? '✅ 주입중' : '📡 목록 주입하기'}</button>
-            </div>` : ''}`;
-        }
+        </div>
+        <div style="background:#fff;border-radius:14px;padding:4px 13px;margin-bottom:10px">${renderFoodList(state.foodSubview)}</div>
+        ${hasSlot ? `
+        <div style="display:flex;gap:8px">
+            <button id="csr-food-reroll-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 새로채우기</button>
+            <button id="csr-food-bundle-inject-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${bundleOn ? CUTE.yellow : CUTE.lav};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${bundleOn ? '✅ 주입중' : '📡 목록 주입하기'}</button>
+        </div>` : ''}`;
+    }
+    // 주방 포함 모든 공간: 표준 12개 그리드. 주방일 때만 위에 팬트리/냉장고 보기 버튼 추가.
+    const isKitchen = state.currentSpace === 'kitchen';
+    const slot = getCharData().spaces[state.currentSpace];
+    let kitchenNav = '';
+    if (isKitchen) {
         const pantryD2 = getFoodSubDisplay('pantry');
         const fridgeD2 = getFoodSubDisplay('fridge');
-        return `
+        kitchenNav = `
         <div style="display:flex;gap:8px;margin-bottom:12px">
-            <button id="csr-pantry-btn" style="flex:1;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${esc(pantryD2.emoji)} ${esc(pantryD2.label)} 보기</button>
-            <button id="csr-fridge-btn" style="flex:1;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${esc(fridgeD2.emoji)} ${esc(fridgeD2.label)} 보기</button>
+            <button id="csr-pantry-btn" style="flex:1;min-width:0;padding:9px 6px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(pantryD2.emoji)} ${esc(pantryD2.label)} 보기</button>
+            <button id="csr-fridge-btn" style="flex:1;min-width:0;padding:9px 6px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(fridgeD2.emoji)} ${esc(fridgeD2.label)} 보기</button>
         </div>`;
     }
-    const slot = getCharData().spaces[state.currentSpace];
     return `
+    ${kitchenNav}
     ${!slot ? `<button id="csr-load-space-btn" style="width:100%;padding:10px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer;margin-bottom:10px">불러오기</button>` : ''}
     <div id="csr-item-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:10px">${renderItemGrid(state.currentSpace)}</div>
     ${slot ? `<button id="csr-room-reroll-btn" style="width:100%;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 다시 채우기 (핀 제외, 새로 채워지는 건 항상 잠금)</button>` : ''}`;
@@ -1224,6 +1228,7 @@ function createFloatingPanel() {
     </div>`;
 }
 
+let _headerPointsInterval = null;
 function openFloat() {
     if (document.getElementById('csr-float')) return;
     pruneOrphanedData();
@@ -1246,8 +1251,16 @@ function openFloat() {
     }));
     state.isPanelOpen = true;
     renderBody();
+    // 패널이 켜져있는 동안 주기적으로 헤더 포인트 갱신 (시간기반 자동충전 등 다른 액션 없이도
+    // 항상 실제 값과 일치하게 — 안전장치)
+    if (_headerPointsInterval) clearInterval(_headerPointsInterval);
+    _headerPointsInterval = setInterval(refreshHeaderPoints, 5000);
 }
-function closeFloat() { document.getElementById('csr-float')?.remove(); state.isPanelOpen = false; }
+function closeFloat() {
+    document.getElementById('csr-float')?.remove();
+    state.isPanelOpen = false;
+    if (_headerPointsInterval) { clearInterval(_headerPointsInterval); _headerPointsInterval = null; }
+}
 function toggleFloat() { document.getElementById('csr-float') ? closeFloat() : openFloat(); }
 
 // ─── 설정 탭 (메인 패널 안의 ⚙️ 설정 탭) ───────
