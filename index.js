@@ -21,6 +21,16 @@ const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인�
 const BASE_POINTS = 100;
 const REFILL_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3시간
 const REFILL_AMOUNT = 10;
+const ROULETTE_COOLDOWN_MS = 3 * 60 * 60 * 1000; // 3시간마다 한 번
+// 보상이 클수록 당첨 확률(weight)은 낮아짐 — 합 100 기준 비중
+const ROULETTE_OUTCOMES = [
+    { key: 'lose', label: '꽝', pct: -100, weight: 38, color: '#5b5650' },
+    { key: 'p10', label: '+10%', pct: 10, weight: 30, color: '#f3c969' },
+    { key: 'p30', label: '+30%', pct: 30, weight: 18, color: '#e8a13d' },
+    { key: 'p50', label: '+50%', pct: 50, weight: 9, color: '#d97b29' },
+    { key: 'p70', label: '+70%', pct: 70, weight: 4, color: '#c0392b' },
+    { key: 'p100', label: '+100%', pct: 100, weight: 1, color: '#8e44ad' },
+];
 const ITEM_CAP = 12;
 
 const SPACES = [
@@ -54,6 +64,7 @@ const defaultSettings = {
     selectedProfileName: null,
     maxTokens: 4000,
     outputLanguage: 'ko', // 'ko' | 'en'
+    rouletteLastSpinAt: 0,
     perChar: {}, // { [charKey]: { house:{current,history}, spaces:{key:[..]}, pantry:[], fridge:[] } }
 };
 
@@ -155,6 +166,18 @@ function pruneOrphanedData() {
     const cache = s.perChar || {};
     let changed = false;
 
+    // ⚠ 안전장치: 캐릭터 목록이 아직 로드되기 전(확장 리로드/업데이트 직후처럼 ctx.characters가
+    // 비어있는 시점)에 이 함수가 실행되면, 모든 저장된 캐릭터가 "고아"로 잘못 판단돼서 통째로
+    // 삭제될 위험이 있음 — 그게 "확장 업데이트하면 집 데이터가 사라진다"는 버그의 진짜 원인이었음.
+    // 캐릭터 목록이 비어있으면 정리 자체를 건너뜀 (저장된 게 있는데 목록이 비어있다는 건
+    // 아직 로딩 중이라는 신호일 뿐, 실제로 캐릭터가 다 사라졌다는 뜻이 아님).
+    if (!Array.isArray(ctx.characters) || ctx.characters.length === 0) {
+        if (Object.keys(cache).length > 0) {
+            console.warn(`[${MODULE_NAME}] 캐릭터 목록이 비어있어 고아 데이터 정리를 건너뜀 (로딩 중일 수 있음)`);
+        }
+        return;
+    }
+
     // 1) 더 이상 존재하지 않는 캐릭터(avatar)의 데이터 삭제 — 'default'(페르소나만 있을 때 폴백 키)는 유지
     const validKeys = new Set((ctx.characters || []).map((c) => c.avatar));
     validKeys.add('default');
@@ -237,6 +260,50 @@ function syncChatleRoyalPoints() {
     save();
     toastr.success(`챗틀로얄에서 ${amount}P 가져왔어요!`);
     return amount;
+}
+
+// ─── 룰렛(도박성 베팅) ───────────────────────
+function getRouletteCooldownRemaining() {
+    const s = getSettings();
+    const next = (s.rouletteLastSpinAt || 0) + ROULETTE_COOLDOWN_MS;
+    return Math.max(0, next - Date.now());
+}
+function formatCooldown(ms) {
+    const totalMin = Math.ceil(ms / 60000);
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return h > 0 ? `${h}시간 ${m}분` : `${m}분`;
+}
+function pickRouletteOutcome() {
+    const total = ROULETTE_OUTCOMES.reduce((sum, o) => sum + o.weight, 0);
+    let r = Math.random() * total;
+    for (const o of ROULETTE_OUTCOMES) {
+        if (r < o.weight) return o;
+        r -= o.weight;
+    }
+    return ROULETTE_OUTCOMES[0];
+}
+// bet: 자체 보유 포인트(s.points) 기준 — 챗틀로얄에서 동기화 안 한 포인트는 베팅 대상 아님
+function spinRoulette(bet) {
+    const s = getSettings();
+    if (getRouletteCooldownRemaining() > 0) {
+        return { error: `아직 쿨다운 중이에요 (${formatCooldown(getRouletteCooldownRemaining())} 남음)` };
+    }
+    bet = Math.floor(bet);
+    if (!Number.isFinite(bet) || bet <= 0) return { error: '베팅 금액을 입력해주세요' };
+    if (bet > s.points) return { error: `자체 보유 포인트(${s.points}P)보다 많이 베팅할 수 없어요` };
+
+    const outcome = pickRouletteOutcome();
+    if (outcome.pct < 0) {
+        s.points -= bet;
+    } else {
+        const gain = Math.round(bet * outcome.pct / 100);
+        s.points += gain;
+        s.lifetimePoints += gain;
+    }
+    s.rouletteLastSpinAt = Date.now();
+    save();
+    return { outcome, bet, newPoints: s.points };
 }
 
 // ─── AI 호출 ────────────────────────────────
@@ -806,6 +873,89 @@ function showInjectionSummaryPanel() {
     renderList();
     document.body.appendChild(panel);
 }
+
+// ─── 룰렛 UI ─────────────────────────────────
+function buildRouletteGradient() {
+    let acc = 0;
+    const stops = ROULETTE_OUTCOMES.map((o) => {
+        const start = acc;
+        acc += (o.weight / 100) * 360;
+        return `${o.color} ${start}deg ${acc}deg`;
+    });
+    return `conic-gradient(${stops.join(',')})`;
+}
+function getOutcomeMidAngle(key) {
+    let acc = 0;
+    for (const o of ROULETTE_OUTCOMES) {
+        const start = acc;
+        acc += (o.weight / 100) * 360;
+        if (o.key === key) return (start + acc) / 2;
+    }
+    return 0;
+}
+function showRoulettePopup() {
+    document.getElementById('csr-roulette-popup')?.remove();
+    const s = getSettings();
+    const cooldownMs = getRouletteCooldownRemaining();
+    const onCooldown = cooldownMs > 0;
+    const modal = document.createElement('div');
+    modal.id = 'csr-roulette-popup';
+    modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10900;display:flex;align-items:center;justify-content:center;padding:16px`;
+    modal.innerHTML = `
+      <div style="background:${DEED.bgCard};border-radius:18px;padding:20px 16px;max-width:300px;width:100%;text-align:center;position:relative">
+        <button id="csr-roulette-close" style="position:absolute;top:10px;right:10px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
+        <h3 style="font-family:'Georgia',serif;margin:0 0 4px;color:${DEED.ink};font-size:15px">🎰 포인트 룰렛</h3>
+        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-bottom:14px">3시간마다 1회 · 자체 보유 ${s.points}P</div>
+        <div style="position:relative;width:170px;height:170px;margin:0 auto 16px">
+          <div id="csr-roulette-wheel" style="width:170px;height:170px;border-radius:50%;background:${buildRouletteGradient()};border:4px solid ${DEED.ink};transition:transform 3s cubic-bezier(.17,.67,.12,.99)"></div>
+          <div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-top:16px solid ${DEED.ink}"></div>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;font-size:9px;color:${DEED.ink};opacity:.75;margin-bottom:14px">
+          ${ROULETTE_OUTCOMES.map((o) => `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${o.color};margin-right:2px;vertical-align:middle"></span>${o.label}</span>`).join('')}
+        </div>
+        ${onCooldown
+            ? `<div style="font-size:12px;color:${DEED.ink};opacity:.7;padding:10px 0">⏳ 쿨다운 중 — ${formatCooldown(cooldownMs)} 후 가능</div>`
+            : `<div style="display:flex;gap:6px;margin-bottom:10px">
+                <input id="csr-roulette-bet" type="number" min="1" max="${s.points}" value="${Math.min(10, s.points)}" placeholder="베팅 포인트" style="flex:1;padding:8px;border:1px solid ${DEED.line};border-radius:10px;font-size:12px;text-align:center">
+                <button id="csr-roulette-spin-btn" style="padding:8px 14px;border:none;border-radius:10px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:12px;cursor:pointer" ${s.points <= 0 ? 'disabled' : ''}>스핀</button>
+              </div>`}
+        <div id="csr-roulette-result" style="font-size:12px;font-weight:800;color:${DEED.ink};min-height:18px"></div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('csr-roulette-close')?.addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+
+    document.getElementById('csr-roulette-spin-btn')?.addEventListener('click', () => {
+        const betInput = document.getElementById('csr-roulette-bet');
+        const bet = parseInt(betInput.value, 10);
+        const spinBtn = document.getElementById('csr-roulette-spin-btn');
+        const resultEl = document.getElementById('csr-roulette-result');
+        const wheel = document.getElementById('csr-roulette-wheel');
+
+        // 결과(당첨/꽝, 포인트 반영)는 미리 확정하고, 룰렛 휠은 그 결과에 맞춰 시각적으로만 돎
+        const result = spinRoulette(bet);
+        if (result.error) { toastr.warning(result.error); return; }
+
+        spinBtn.disabled = true;
+        betInput.disabled = true;
+        resultEl.textContent = '';
+
+        const mid = getOutcomeMidAngle(result.outcome.key);
+        const spins = 5; // 시각적 회전 바퀴수
+        const rotateTo = spins * 360 + ((360 - mid) % 360);
+        wheel.style.transform = `rotate(${rotateTo}deg)`;
+
+        setTimeout(() => {
+            const isWin = result.outcome.pct > 0;
+            resultEl.style.color = isWin ? '#2e8b57' : '#c0392b';
+            resultEl.textContent = isWin
+                ? `🎉 ${result.outcome.label}! +${Math.round(result.bet * result.outcome.pct / 100)}P (보유 ${result.newPoints}P)`
+                : `💀 꽝! -${result.bet}P (보유 ${result.newPoints}P)`;
+            refreshHeaderPoints();
+            setTimeout(() => { modal.remove(); }, 2200);
+        }, 3100);
+    });
+}
 function renderBody() {
     const body = document.getElementById('csr-content');
     if (!body) return;
@@ -986,6 +1136,7 @@ function createFloatingPanel() {
             <span style="font-size:16px">🏠</span>
             <div style="flex:1;font-weight:800;color:${DEED.bg};font-size:13px">그남의 집</div>
             <button id="csr-header-inject-btn" style="font-weight:700;font-size:11px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 9px;cursor:pointer">📡 0</button>
+            <button id="csr-header-roulette-btn" title="포인트 룰렛 (3시간마다 1회)" style="font-weight:700;font-size:12px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 7px;cursor:pointer">🎰</button>
             <span id="csr-header-pts" style="font-family:Georgia,serif;font-weight:700;font-size:12px;color:${DEED.gold};background:rgba(255,255,255,.1);border-radius:8px;padding:3px 9px">${getTotalPoints()} P</span>
             <button id="csr-close" style="background:none;border:1px solid ${DEED.bg}55;border-radius:4px;color:${DEED.bg};cursor:pointer;font-size:12px;padding:2px 7px">✕</button>
         </div>
@@ -1007,6 +1158,7 @@ function openFloat() {
     makeDraggable(panel, document.getElementById('csr-drag-handle'));
     document.getElementById('csr-close')?.addEventListener('click', closeFloat);
     document.getElementById('csr-header-inject-btn')?.addEventListener('click', showInjectionSummaryPanel);
+    document.getElementById('csr-header-roulette-btn')?.addEventListener('click', showRoulettePopup);
     panel.querySelectorAll('.csr-tab-btn').forEach((btn) => btn.addEventListener('click', () => {
         state.currentTab = btn.dataset.tab;
         panel.querySelectorAll('.csr-tab-btn').forEach((b) => {
