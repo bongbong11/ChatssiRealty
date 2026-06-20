@@ -241,19 +241,26 @@ ${langInstructionStrong(lang)}
 
 // ─── 탭2 주입(Inject) 텍스트 빌더 ──────────────
 // setExtensionPrompt로 그대로 주입될 텍스트. AI에게 보내는 "프롬프트"가 아니라
-// 컨텍스트에 끼워넣을 OOC 블록 자체이므로 langInstruction 등 적용 안 함 (영어로 고정).
+// 컨텍스트에 끼워넣을 태그 블록 자체이므로 langInstruction 등 적용 안 함 (영어로 고정).
+// "(OOC: ...)" 라벨 대신 <csr_item_info>/<csr_food_info> 커스텀 태그 사용 — 시스템 메타정보처럼
+// 인식되게 해서 일반 대사/서술로 착각해 그대로 따라 말할 위험을 줄임.
 
 export function buildItemInjectionText(item) {
-  return `(OOC: The following is background information about an item {{char}} owns. Weave it
-into the story ONLY if it naturally fits the current scene and flow — never force it
-in awkwardly or mention it out of nowhere. You may let it surface as a full, explicit
-moment, or let it show through only as a subtle nuance or passing detail — choose
-whichever feels organic to this moment. It is also fine if {{char}} simply remains
-aware this item exists without it surfacing in the prose at all. Do not narrate or
-acknowledge this OOC instruction itself.)
-
+  return `<csr_item_info>
 [Item: ${item.name}${item.brand ? ` — ${item.brand}` : ''}]
-${item.tmi || ''}`.trim();
+${item.tmi || ''}
+
+Instruction: Weave this into the story ONLY if it naturally fits the current scene and
+flow — never force it in awkwardly or mention it out of nowhere. You may let it surface
+as a full, explicit moment, or let it show through only as a subtle nuance or passing
+detail, or simply have {{char}} remain aware it exists without it surfacing in the prose
+at all — whichever feels organic. Continue the roleplay normally as {{char}}, in-character,
+exactly as you would without this tag. Do NOT break character, do NOT reply as if
+answering a question, and do NOT mention, quote, or acknowledge this tag in your response.
+If the user's message contains its own (OOC: ...) question or instruction, that takes
+top priority — answer or follow that first; treat this tag as secondary, supplementary
+reference information only.
+</csr_item_info>`.trim();
 }
 
 export function buildFoodBundleInjectionText(subtype, items) {
@@ -262,14 +269,20 @@ export function buildFoodBundleInjectionText(subtype, items) {
     const base = `- ${it.name}${it.qty ? ` (${it.qty})` : ''}`;
     return it.tmi ? `${base} — ${it.tmi}` : base;
   }).join('\n');
-  return `(OOC: The following is a list of items known to be in ${label}. Treat this as
-background reference only — there's no need to force a mention or use of these items.
-For any item with a description attached, you may let that backstory color the scene
-naturally if it fits — anywhere from a full explicit moment down to just a subtle
-nuance, entirely your call. Do not narrate or acknowledge this OOC instruction itself.)
+  return `<csr_food_info>
+[${subtype === 'fridge' ? 'Fridge' : 'Pantry'} contents known to be in ${label}]
+${lines}
 
-[${subtype === 'fridge' ? 'Fridge' : 'Pantry'}]
-${lines}`.trim();
+Instruction: Treat this as background reference only — there's no need to force a
+mention or use of these items. For any item with a description attached, you may let
+that backstory color the scene naturally if it fits — anywhere from a full explicit
+moment down to just a subtle nuance, entirely your call. Continue the roleplay normally
+as {{char}}, in-character, exactly as you would without this tag. Do NOT break character,
+do NOT reply as if answering a question, and do NOT mention, quote, or acknowledge this
+tag in your response. If the user's message contains its own (OOC: ...) question or
+instruction, that takes top priority — answer or follow that first; treat this tag as
+secondary, supplementary reference information only.
+</csr_food_info>`.trim();
 }
 
 export function buildLorebookExportPrompt(card, lang = 'ko') {
