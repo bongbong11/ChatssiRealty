@@ -65,6 +65,7 @@ const defaultSettings = {
     maxTokens: 4000,
     outputLanguage: 'ko', // 'ko' | 'en'
     rouletteLastSpinAt: 0,
+    chatHistoryCount: 30, // buildManualContext에서 가져올 최근 채팅 메시지 개수
     perChar: {}, // { [charKey]: { house:{current,history}, spaces:{key:[..]}, pantry:[], fridge:[] } }
 };
 
@@ -95,6 +96,14 @@ function filterPhoneTrigger(t) {
     return (t || '').replace(/<phone_trigger[^>]*>[\s\S]*?<\/phone_trigger>/gi, '').trim();
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
+// 비동기 생성(AI 호출) 완료 후 DOM을 갱신할 때, 그 사이 유저가 탭을 옮겨서 해당 요소가
+// 이미 사라졌을 수 있음 — 그런 경우 조용히 무시 (데이터 자체는 이미 save()로 저장됐으니 안전,
+// 다음에 그 탭 다시 열면 최신 데이터로 보임).
+function setInnerHTML(id, html) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+    return !!el;
+}
 
 // ─── 탭2 주입(inject) — generate_interceptor 사용 ───
 // setExtensionPrompt(position/depth)는 Post-History Instructions보다 앞에 끼어들 수 있어서
@@ -312,10 +321,10 @@ function spinRoulette(bet) {
 async function buildManualContext() {
     const ctx = SillyTavern.getContext();
     const char = ctx.characters?.[ctx.characterId];
-    const charDesc = [char?.description, char?.personality, char?.scenario].filter(Boolean).join('\n').slice(0, 1200);
+    const charDesc = [char?.description, char?.personality, char?.scenario].filter(Boolean).join('\n').slice(0, 8000);
     const personaName = ctx.name1 || '';
-    const personaDesc = (ctx.powerUserSettings?.persona_description || '').slice(0, 500);
-    const recentChat = (ctx.chat || []).slice(-15).map((m) => `${m.is_user ? (personaName || '유저') : (char?.name || 'AI')}: ${m.mes}`).join('\n').slice(0, 3000);
+    const personaDesc = (ctx.powerUserSettings?.persona_description || '').slice(0, 4000);
+    const recentChat = (ctx.chat || []).slice(-(getSettings().chatHistoryCount || 30)).map((m) => `${m.is_user ? (personaName || '유저') : (char?.name || 'AI')}: ${m.mes}`).join('\n').slice(-12000);
     // 로어북(월드인포) — isDryRun=true로 호출해서 실제 생성 이벤트(WORLD_INFO_ACTIVATED 등)는
     // 안 발생시키고 텍스트만 가져옴. 현재 챗 내용 기준으로 키워드 매칭된 엔트리만 반영됨.
     let worldInfo = '';
@@ -324,8 +333,8 @@ async function buildManualContext() {
         // 아니라 .mes 텍스트만 뽑은 "문자열 배열"을 역순(최근 메시지가 depth 0)으로 넘겨야 함.
         // (script.js의 실제 호출부: coreChat.map(x => x.mes).reverse() 패턴과 동일하게 맞춤)
         const chatForWI = (ctx.chat || []).map((m) => m?.mes || '').reverse();
-        const wi = await ctx.getWorldInfoPrompt?.(chatForWI, 4096, true);
-        worldInfo = (wi?.worldInfoString || '').slice(0, 2500);
+        const wi = await ctx.getWorldInfoPrompt?.(chatForWI, 16384, true);
+        worldInfo = (wi?.worldInfoString || '').slice(0, 8000);
         console.log(`[${MODULE_NAME}] 로어북 조회 결과 — 매칭된 텍스트 길이: ${worldInfo.length}자`, worldInfo ? `\n내용 미리보기:\n${worldInfo.slice(0, 300)}${worldInfo.length > 300 ? '...' : ''}` : '(매칭된 엔트리 없음 — 키워드가 현재 채팅에 안 걸렸거나 로어북이 비어있을 수 있음)');
     } catch (e) { console.warn(`[${MODULE_NAME}] 로어북 읽기 실패:`, e.message); }
     return [
@@ -985,7 +994,7 @@ function renderBody() {
         bindHouseTab();
     } else if (state.currentTab === 'items') {
         body.innerHTML = renderItemsTab();
-        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        setInnerHTML('csr-tab2-body', renderTab2Body());
         bindItemsTab();
     } else if (state.currentTab === 'settings') {
         body.innerHTML = `<div style="padding:14px">${renderSettingsTabInner()}</div>`;
@@ -1005,7 +1014,7 @@ function bindHouseTab() {
             const card = await generateHouse(hint, false);
             if (!card) toastr.error('생성에 실패했어요 (AI 응답을 JSON으로 해석하지 못함). 다시 시도하거나 콘솔(F12) 로그를 확인해보세요.');
         } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
-        document.getElementById('csr-deed-container').innerHTML = renderDeed();
+        setInnerHTML('csr-deed-container', renderDeed());
         bindDeedButtons();
     });
     bindDeedButtons();
@@ -1019,7 +1028,7 @@ function bindDeedButtons() {
             if (card) toastr.success('이사 완료!');
             else toastr.error('이사 실패 (AI 응답을 JSON으로 해석하지 못함). 다시 시도해보세요.');
         } catch (e) { toastr.error(`이사 실패: ${e.message}`); }
-        document.getElementById('csr-deed-container').innerHTML = renderDeed();
+        setInnerHTML('csr-deed-container', renderDeed());
         bindDeedButtons();
     });
     document.getElementById('csr-lore-btn')?.addEventListener('click', async () => {
@@ -1040,7 +1049,7 @@ function bindDeedButtons() {
         const idx = parseInt(el.dataset.idx);
         getCharData().house.history.splice(idx, 1);
         save();
-        document.getElementById('csr-deed-container').innerHTML = renderDeed();
+        setInnerHTML('csr-deed-container', renderDeed());
         bindDeedButtons();
         toastr.success('이력 삭제 완료');
     }));
@@ -1057,7 +1066,7 @@ function bindItemsTab() {
 function bindTab2Body() {
     document.getElementById('csr-pantry-btn')?.addEventListener('click', () => openFoodSubview('pantry'));
     document.getElementById('csr-fridge-btn')?.addEventListener('click', () => openFoodSubview('fridge'));
-    document.getElementById('csr-back-btn')?.addEventListener('click', () => { state.foodSubview = null; document.getElementById('csr-tab2-body').innerHTML = renderTab2Body(); bindTab2Body(); });
+    document.getElementById('csr-back-btn')?.addEventListener('click', () => { state.foodSubview = null; setInnerHTML('csr-tab2-body', renderTab2Body()); bindTab2Body(); });
     document.querySelectorAll('.csr-food-switch').forEach((btn) => btn.addEventListener('click', () => openFoodSubview(btn.dataset.sub)));
 
     document.querySelectorAll('.csr-food-row').forEach((el) => el.addEventListener('click', () => {
@@ -1065,7 +1074,7 @@ function bindTab2Body() {
         const action = el.dataset.action;
         if (action === 'unlock') {
             if (unlockFoodItem(state.foodSubview, idx)) {
-                document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+                setInnerHTML('csr-tab2-body', renderTab2Body());
                 bindTab2Body();
                 refreshHeaderPoints();
             }
@@ -1076,36 +1085,36 @@ function bindTab2Body() {
 
     document.getElementById('csr-food-reroll-btn')?.addEventListener('click', async () => {
         const subtype = state.foodSubview;
-        document.getElementById('csr-tab2-body').innerHTML = `<div style="text-align:center;padding:20px;color:${CUTE.text}">다시 채우는 중...</div>`;
+        setInnerHTML('csr-tab2-body', `<div style="text-align:center;padding:20px;color:${CUTE.text}">다시 채우는 중...</div>`);
         try { await generateFoodList(subtype, true); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
-        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        setInnerHTML('csr-tab2-body', renderTab2Body());
         bindTab2Body();
     });
     document.getElementById('csr-food-bundle-inject-btn')?.addEventListener('click', () => {
         const nowOn = toggleFoodBundleInjection(state.foodSubview);
         toastr.success(nowOn ? '목록 주입을 시작했어요 (다음 턴부터 반영)' : '목록 주입을 해제했어요');
-        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        setInnerHTML('csr-tab2-body', renderTab2Body());
         bindTab2Body();
         refreshHeaderInjectBadge();
     });
 
     document.getElementById('csr-load-space-btn')?.addEventListener('click', async () => {
-        document.getElementById('csr-item-grid').innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">불러오는 중...</div>`;
+        setInnerHTML('csr-item-grid', `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">불러오는 중...</div>`);
         try { await generateItemPool(state.currentSpace, false); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
-        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        setInnerHTML('csr-tab2-body', renderTab2Body());
         bindTab2Body();
     });
     document.getElementById('csr-room-reroll-btn')?.addEventListener('click', async () => {
-        document.getElementById('csr-item-grid').innerHTML = `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">다시 채우는 중...</div>`;
+        setInnerHTML('csr-item-grid', `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">다시 채우는 중...</div>`);
         try { await generateItemPool(state.currentSpace, true); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
-        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        setInnerHTML('csr-tab2-body', renderTab2Body());
         bindTab2Body();
     });
     document.querySelectorAll('.csr-item-slot').forEach((el) => el.addEventListener('click', async () => {
         const idx = parseInt(el.dataset.idx);
         if (el.dataset.action === 'unlock') {
             if (unlockItem(state.currentSpace, idx)) {
-                document.getElementById('csr-item-grid').innerHTML = renderItemGrid(state.currentSpace);
+                setInnerHTML('csr-item-grid', renderItemGrid(state.currentSpace));
                 bindTab2Body();
                 refreshHeaderPoints();
             }
@@ -1116,12 +1125,12 @@ function bindTab2Body() {
 }
 async function openFoodSubview(subtype) {
     state.foodSubview = subtype;
-    document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+    setInnerHTML('csr-tab2-body', renderTab2Body());
     bindTab2Body();
     const data = getCharData();
     if (!data[subtype]) {
         try { await generateFoodList(subtype, false); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
-        document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
+        setInnerHTML('csr-tab2-body', renderTab2Body());
         bindTab2Body();
     }
 }
@@ -1217,6 +1226,10 @@ function renderSettingsTabInner() {
             <input id="csr-max-tokens" type="number" min="500" max="16000" step="500" value="${s.maxTokens || 4000}" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
         </div>
         <div>
+            <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">불러올 최근 채팅 개수 (연결 프로필 지정 시에만 적용)</div>
+            <input id="csr-chat-count" type="number" min="5" max="200" step="5" value="${s.chatHistoryCount || 30}" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
+        </div>
+        <div>
             <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">출력 언어 / Output Language</div>
             <select id="csr-lang" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
                 <option value="ko" ${s.outputLanguage === 'ko' ? 'selected' : ''}>한국어</option>
@@ -1242,6 +1255,9 @@ function bindSettingsTabInner() {
     });
     document.getElementById('csr-max-tokens')?.addEventListener('change', (e) => {
         const s = getSettings(); s.maxTokens = parseInt(e.target.value) || 4000; save();
+    });
+    document.getElementById('csr-chat-count')?.addEventListener('change', (e) => {
+        const s = getSettings(); s.chatHistoryCount = parseInt(e.target.value) || 30; save();
     });
     document.getElementById('csr-lang')?.addEventListener('change', (e) => {
         const s = getSettings(); s.outputLanguage = e.target.value; save();
