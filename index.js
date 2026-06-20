@@ -1,5 +1,5 @@
 /**
- * 🏠 챗씨부동산 v0.1
+ * 🏠 그남의 집 v0.1 (구 챗씨부동산)
  * SillyTavern Extension
  * 거주지(주소/구조) + 소지품 인벤토리, 챗틀로얄 포인트 합산
  */
@@ -85,37 +85,46 @@ function filterPhoneTrigger(t) {
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
 
-// ─── 탭2 주입(inject) — setExtensionPrompt 사용 ───
-// rp-planner 실제 코드로 확인됨: setExtensionPrompt(key, value, position, depth) 4개 인자만 사용.
-// position=1, depth=0 → 챗 히스토리 맨 끝(다음 AI 응답 직전)에 고정 주입.
-const INJECT_POSITION = 1;
-function setInjection(key, text) {
-    try {
-        SillyTavern.getContext().setExtensionPrompt?.(key, text, INJECT_POSITION, 0);
-    } catch (e) { console.warn(`[${MODULE_NAME}] setExtensionPrompt 실패:`, e.message); }
-}
-function clearInjection(key) { setInjection(key, ''); }
-// 패널을 새로 열거나 채팅을 옮겼을 때, 켜져 있던 주입들을 다시 등록 (setExtensionPrompt는 보통
-// 세션/챗 메모리에 머무는 값이라 새로고침 시 다시 걸어줘야 함)
-function reapplyInjections() {
+// ─── 탭2 주입(inject) — generate_interceptor 사용 ───
+// setExtensionPrompt(position/depth)는 Post-History Instructions보다 앞에 끼어들 수 있어서
+// (다른 확장 로그에서 PME가 generate_interceptor 쓰는 걸 확인) 우리도 생성 직전 chat 배열을
+// 직접 건드리는 인터셉터 방식으로 전환 — 이러면 PHI를 포함해 진짜로 모든 것보다 뒤에 들어감.
+function collectActiveInjectionText() {
     const data = getCharData();
+    const parts = [];
     for (const spaceKey of Object.keys(data.spaces || {})) {
         const slot = data.spaces[spaceKey];
         if (slot?.empty) continue;
         for (const it of slot?.items || []) {
-            if (it.injected) setInjection(`csr_inj_item_${it.id}`, buildItemInjectionText(it));
+            if (it.injected) parts.push(buildItemInjectionText(it));
         }
     }
     for (const subtype of ['pantry', 'fridge']) {
         if (data[`${subtype}BundleInjected`]) {
             const list = (data[subtype]?.list || []).filter((it) => it.unlocked);
-            setInjection(`csr_inj_food_${subtype}`, buildFoodBundleInjectionText(subtype, list));
+            if (list.length) parts.push(buildFoodBundleInjectionText(subtype, list));
         }
         for (const it of data[subtype]?.list || []) {
-            if (it.injected) setInjection(`csr_inj_item_${it.id}`, buildItemInjectionText(it));
+            if (it.injected) parts.push(buildItemInjectionText(it));
         }
     }
+    return parts.join('\n\n');
 }
+// manifest.json의 "generate_interceptor": "csrGenerateInterceptor"가 이 이름으로 전역에서 찾음
+// 별도 시스템 메시지로 맨 끝에 추가 — 유저의 실제 입력 메시지 자체는 건드리지 않음 (더 깔끔하고,
+// 채팅 기록에 영구히 섞여 저장되는 것도 방지). OOC 라벨은 유지 — 라벨이 없으면 모델이 이걸 그냥
+// 일반 서술/대사로 착각해서 흡수해버릴 위험이 더 커짐. 누출 방지는 프롬프트 안의
+// "Do not narrate or acknowledge this OOC instruction itself" 문구로 처리.
+window.csrGenerateInterceptor = function (chat, _contextSize, _abort, _type) {
+    try {
+        const text = collectActiveInjectionText();
+        if (text && Array.isArray(chat)) {
+            chat.push({ role: 'user', content: text });
+        }
+    } catch (e) { console.warn(`[${MODULE_NAME}] generate_interceptor 실패:`, e.message); }
+};
+// 인터셉터가 매 생성 시점에 현재 상태를 그대로 읽어가기 때문에, setExtensionPrompt 방식과 달리
+// "다시 등록"해줄 필요가 없음 — 토글만 데이터에 저장해두면 끝.
 
 // ─── 캐릭터 키 (캐릭터 단위로 데이터 보관 — chat 단위 아님) ───
 function getCharKey() {
@@ -456,12 +465,6 @@ function toggleFoodBundleInjection(subtype) {
     const data = getCharData();
     const flagKey = `${subtype}BundleInjected`;
     data[flagKey] = !data[flagKey];
-    if (data[flagKey]) {
-        const list = (data[subtype]?.list || []).filter((it) => it.unlocked);
-        setInjection(`csr_inj_food_${subtype}`, buildFoodBundleInjectionText(subtype, list));
-    } else {
-        clearInjection(`csr_inj_food_${subtype}`);
-    }
     save();
     return data[flagKey];
 }
@@ -686,9 +689,14 @@ function showItemModal(kind, containerKey, idx) {
 }
 
 // ─── 메인 렌더 / 바인딩 ─────────────────────
+function refreshHeaderPoints() {
+    const el = document.getElementById('csr-header-pts');
+    if (el) el.textContent = `${getTotalPoints()} P`;
+}
 function renderBody() {
     const body = document.getElementById('csr-content');
     if (!body) return;
+    refreshHeaderPoints();
     if (state.currentTab === 'house') {
         body.innerHTML = renderHouseTab();
         bindHouseTab();
@@ -709,7 +717,7 @@ function bindHouseTab() {
     }));
     document.getElementById('csr-generate-btn')?.addEventListener('click', async () => {
         const hint = document.getElementById('csr-ref-input')?.value || '';
-        showLoading('csr-deed-container', '챗씨부동산이 집을 알아보는 중...');
+        showLoading('csr-deed-container', '그남의 집이 알아보는 중...');
         try {
             const card = await generateHouse(hint, false);
             if (!card) toastr.error('생성에 실패했어요 (AI 응답을 JSON으로 해석하지 못함). 다시 시도하거나 콘솔(F12) 로그를 확인해보세요.');
@@ -764,6 +772,7 @@ function bindTab2Body() {
             if (unlockFoodItem(state.foodSubview, idx)) {
                 document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
                 bindTab2Body();
+                refreshHeaderPoints();
             }
         } else if (action === 'open') {
             showItemModal('food', state.foodSubview, idx);
@@ -802,6 +811,7 @@ function bindTab2Body() {
             if (unlockItem(state.currentSpace, idx)) {
                 document.getElementById('csr-item-grid').innerHTML = renderItemGrid(state.currentSpace);
                 bindTab2Body();
+                refreshHeaderPoints();
             }
         } else {
             showItemModal('room', state.currentSpace, idx);
@@ -847,7 +857,8 @@ function createFloatingPanel() {
     return `<div id="csr-float" style="position:fixed;top:60px;right:20px;width:min(420px,95vw);height:80vh;background:${DEED.bg};border:2px solid ${DEED.ink};border-radius:6px;box-shadow:0 4px 30px rgba(0,0,0,.4);z-index:9997;display:flex;flex-direction:column;resize:both;overflow:hidden;min-width:300px;min-height:360px;font-family:system-ui,sans-serif">
         <div id="csr-drag-handle" style="background:${DEED.ink};padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:move;flex-shrink:0;user-select:none">
             <span style="font-size:16px">🏠</span>
-            <div style="flex:1;font-weight:800;color:${DEED.bg};font-size:13px">챗씨부동산</div>
+            <div style="flex:1;font-weight:800;color:${DEED.bg};font-size:13px">그남의 집</div>
+            <span id="csr-header-pts" style="font-family:Georgia,serif;font-weight:700;font-size:12px;color:${DEED.gold};background:rgba(255,255,255,.1);border-radius:8px;padding:3px 9px">${getTotalPoints()} P</span>
             <button id="csr-close" style="background:none;border:1px solid ${DEED.bg}55;border-radius:4px;color:${DEED.bg};cursor:pointer;font-size:12px;padding:2px 7px">✕</button>
         </div>
         <div id="csr-tabs" style="display:flex;border-bottom:1px solid ${DEED.line};flex-shrink:0">
@@ -964,7 +975,7 @@ function bindSettingsTabInner() {
     });
     document.getElementById('csr-full-wipe-btn')?.addEventListener('click', async () => {
         const { Popup, POPUP_RESULT } = SillyTavern.getContext();
-        const ok = await Popup.show.confirm('완전 삭제', '포인트를 포함한 챗씨부동산의 모든 데이터를 완전히 삭제합니다. 확장을 제거하기 전에만 사용하세요. 되돌릴 수 없습니다. 정말 진행할까요?');
+        const ok = await Popup.show.confirm('완전 삭제', '포인트를 포함한 그남의 집의 모든 데이터를 완전히 삭제합니다. 확장을 제거하기 전에만 사용하세요. 되돌릴 수 없습니다. 정말 진행할까요?');
         if (ok === POPUP_RESULT.AFFIRMATIVE) {
             SillyTavern.getContext().extensionSettings[MODULE_NAME] = structuredClone(defaultSettings);
             save();
@@ -981,8 +992,8 @@ export async function onActivate() {
     pruneOrphanedData();
 
     if (!document.getElementById('csr-wand-btn')) {
-        const html = `<div id="csr-wand-btn" title="챗씨부동산" style="cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:5px;font-size:13px">
-            <span>🏠</span><span style="font-size:12px">챗씨부동산</span>
+        const html = `<div id="csr-wand-btn" title="그남의 집" style="cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:5px;font-size:13px">
+            <span>🏠</span><span style="font-size:12px">그남의 집</span>
         </div>`;
         const toolbar = document.getElementById('extensionsMenu') ?? document.getElementById('top-bar');
         toolbar?.insertAdjacentHTML('beforeend', html);
