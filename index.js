@@ -682,6 +682,7 @@ function showItemModal(kind, containerKey, idx) {
     document.getElementById('csr-modal-inject')?.addEventListener('click', () => {
         const nowInjected = toggleItemInjection(item);
         toastr.success(nowInjected ? '주입을 시작했어요 (다음 턴부터 반영)' : '주입을 해제했어요');
+        refreshHeaderInjectBadge();
         modal.remove();
     });
 }
@@ -691,10 +692,76 @@ function refreshHeaderPoints() {
     const el = document.getElementById('csr-header-pts');
     if (el) el.textContent = `${getTotalPoints()} P`;
 }
+
+// ─── 주입 현황 요약 ──────────────────────────
+function getActiveInjections() {
+    const data = getCharData();
+    const list = [];
+    for (const spaceKey of Object.keys(data.spaces || {})) {
+        const slot = data.spaces[spaceKey];
+        if (slot?.empty) continue;
+        for (const it of slot?.items || []) {
+            if (it.injected) list.push({ label: `${it.emoji || '📦'} ${it.name}`, kind: 'item', item: it });
+        }
+    }
+    for (const subtype of ['pantry', 'fridge']) {
+        if (data[`${subtype}BundleInjected`]) {
+            list.push({ label: subtype === 'fridge' ? '🧊 냉장고 목록 전체' : '🥫 팬트리 목록 전체', kind: 'bundle', subtype });
+        }
+        for (const it of data[subtype]?.list || []) {
+            if (it.injected) list.push({ label: `${it.emoji || '🍽️'} ${it.name}`, kind: 'item', item: it });
+        }
+    }
+    return list;
+}
+function refreshHeaderInjectBadge() {
+    const btn = document.getElementById('csr-header-inject-btn');
+    if (!btn) return;
+    const count = getActiveInjections().length;
+    btn.textContent = `📡 ${count}`;
+    btn.style.opacity = count > 0 ? '1' : '.5';
+}
+function showInjectionSummaryPanel() {
+    document.getElementById('csr-inject-summary')?.remove();
+    const mw = Math.min(280, window.innerWidth * 0.85);
+    const ml = Math.max(10, window.innerWidth - mw - 20);
+    const mt = 60;
+    const panel = document.createElement('div');
+    panel.id = 'csr-inject-summary';
+    panel.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;max-height:60vh;overflow-y:auto;background:#fff;border-radius:14px;padding:14px;font-family:system-ui;z-index:10700;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
+
+    function renderList() {
+        const items = getActiveInjections();
+        panel.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                <div style="font-weight:800;font-size:13px;color:${DEED.ink}">📡 주입중인 내용</div>
+                <button id="csr-inject-summary-close" style="background:none;border:none;cursor:pointer;font-size:13px;color:${DEED.ink};opacity:.6">✕</button>
+            </div>
+            ${items.length === 0
+                ? `<div style="font-size:11px;color:${DEED.ink};opacity:.6;text-align:center;padding:14px 0">현재 주입중인 게 없어요.</div>`
+                : items.map((entry, i) => `
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:1px dashed ${DEED.line}">
+                        <span style="font-size:12px;color:${DEED.ink}">${esc(entry.label)}</span>
+                        <button class="csr-inject-remove" data-idx="${i}" style="font-size:10px;background:${CUTE.yellow};border:none;border-radius:8px;padding:3px 8px;font-weight:800;color:${CUTE.text};cursor:pointer;flex-shrink:0">해제</button>
+                    </div>`).join('')}
+        `;
+        panel.querySelector('#csr-inject-summary-close')?.addEventListener('click', () => panel.remove());
+        panel.querySelectorAll('.csr-inject-remove').forEach((btn) => btn.addEventListener('click', () => {
+            const entry = items[parseInt(btn.dataset.idx)];
+            if (entry.kind === 'bundle') toggleFoodBundleInjection(entry.subtype);
+            else toggleItemInjection(entry.item);
+            refreshHeaderInjectBadge();
+            renderList();
+        }));
+    }
+    renderList();
+    document.body.appendChild(panel);
+}
 function renderBody() {
     const body = document.getElementById('csr-content');
     if (!body) return;
     refreshHeaderPoints();
+    refreshHeaderInjectBadge();
     if (state.currentTab === 'house') {
         body.innerHTML = renderHouseTab();
         bindHouseTab();
@@ -789,6 +856,7 @@ function bindTab2Body() {
         toastr.success(nowOn ? '목록 주입을 시작했어요 (다음 턴부터 반영)' : '목록 주입을 해제했어요');
         document.getElementById('csr-tab2-body').innerHTML = renderTab2Body();
         bindTab2Body();
+        refreshHeaderInjectBadge();
     });
 
     document.getElementById('csr-load-space-btn')?.addEventListener('click', async () => {
@@ -856,6 +924,7 @@ function createFloatingPanel() {
         <div id="csr-drag-handle" style="background:${DEED.ink};padding:10px 12px;display:flex;align-items:center;gap:10px;cursor:move;flex-shrink:0;user-select:none">
             <span style="font-size:16px">🏠</span>
             <div style="flex:1;font-weight:800;color:${DEED.bg};font-size:13px">그남의 집</div>
+            <button id="csr-header-inject-btn" style="font-weight:700;font-size:11px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 9px;cursor:pointer">📡 0</button>
             <span id="csr-header-pts" style="font-family:Georgia,serif;font-weight:700;font-size:12px;color:${DEED.gold};background:rgba(255,255,255,.1);border-radius:8px;padding:3px 9px">${getTotalPoints()} P</span>
             <button id="csr-close" style="background:none;border:1px solid ${DEED.bg}55;border-radius:4px;color:${DEED.bg};cursor:pointer;font-size:12px;padding:2px 7px">✕</button>
         </div>
@@ -876,6 +945,7 @@ function openFloat() {
     const panel = document.getElementById('csr-float');
     makeDraggable(panel, document.getElementById('csr-drag-handle'));
     document.getElementById('csr-close')?.addEventListener('click', closeFloat);
+    document.getElementById('csr-header-inject-btn')?.addEventListener('click', showInjectionSummaryPanel);
     panel.querySelectorAll('.csr-tab-btn').forEach((btn) => btn.addEventListener('click', () => {
         state.currentTab = btn.dataset.tab;
         panel.querySelectorAll('.csr-tab-btn').forEach((b) => {
