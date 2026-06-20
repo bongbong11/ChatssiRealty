@@ -21,7 +21,7 @@ const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
 const BASE_POINTS = 100;
 const REFILL_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3시간
-const REFILL_AMOUNT = 30;
+const REFILL_AMOUNT = 10;
 const ROULETTE_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1시간마다 한 번
 // 보상이 클수록 당첨 확률(weight)은 낮아짐 — 합 100 기준 비중
 const ROULETTE_OUTCOMES = [
@@ -430,6 +430,8 @@ async function applyWorldLabelsToSpaces() {
     const worldClass = data.house.current?._worldClass;
     if (!worldClass) { toastr.warning('먼저 집을 생성해주세요 (세계관 정보가 필요해요).'); return false; }
     const currentLabels = Object.fromEntries(SPACES.map((s) => [s.key, { label: s.label, emoji: s.emoji }]));
+    currentLabels.pantry = { label: '팬트리', emoji: '🥫' };
+    currentLabels.fridge = { label: '냉장고', emoji: '🧊' };
     const result = parseJSON(await callAI(buildSpaceLabelsPrompt(worldClass, currentLabels, lang)));
     if (!result) { toastr.error('명칭 변경에 실패했어요 (AI 응답을 JSON으로 해석하지 못함).'); return false; }
     data.spaceLabels = result;
@@ -442,6 +444,12 @@ function getSpaceDisplay(spaceKey) {
     const def = SPACES.find((s) => s.key === spaceKey);
     const override = getCharData().spaceLabels?.[spaceKey];
     return { label: override?.label || def.label, emoji: override?.emoji || def.emoji, food: def.food };
+}
+// 팬트리/냉장고는 SPACES 7개 고정 카테고리에 안 들어있고 주방 안의 서브카테고리라 별도 처리
+function getFoodSubDisplay(subtype) {
+    const defaults = { pantry: { label: '팬트리', emoji: '🥫' }, fridge: { label: '냉장고', emoji: '🧊' } };
+    const override = getCharData().spaceLabels?.[subtype];
+    return { label: override?.label || defaults[subtype].label, emoji: override?.emoji || defaults[subtype].emoji };
 }
 
 // 클립보드 쓰기 — 비동기 AI 호출 후라 유저 제스처(transient activation)가 만료돼서
@@ -762,8 +770,8 @@ function renderHouseTab() {
 function renderItemsTab() {
     return `
     <div style="padding:14px">
-        <div style="display:flex;gap:6px;flex-wrap:wrap;padding-bottom:10px">
-            ${SPACES.map((s) => { const d = getSpaceDisplay(s.key); return `<div class="csr-space-chip" data-space="${s.key}" style="flex:none;display:inline-flex;align-items:center;gap:4px;line-height:1.4;padding:7px 12px;border-radius:999px;background:${s.key === state.currentSpace ? CUTE.lav : '#fff'};color:${CUTE.text};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap"><span style="font-size:13px">${esc(d.emoji)}</span><span>${esc(d.label)}</span></div>`; }).join('')}
+        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;padding-bottom:10px">
+            ${SPACES.map((s) => { const d = getSpaceDisplay(s.key); return `<div class="csr-space-chip" data-space="${s.key}" style="display:flex;align-items:center;justify-content:center;gap:4px;line-height:1.4;padding:7px 6px;border-radius:999px;background:${s.key === state.currentSpace ? CUTE.lav : '#fff'};color:${CUTE.text};font-size:10px;font-weight:800;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="font-size:13px;flex-shrink:0">${esc(d.emoji)}</span><span style="overflow:hidden;text-overflow:ellipsis">${esc(d.label)}</span></div>`; }).join('')}
         </div>
         <div id="csr-tab2-body"></div>
     </div>`;
@@ -774,13 +782,16 @@ function renderTab2Body() {
             const data = getCharData();
             const bundleOn = !!data[`${state.foodSubview}BundleInjected`];
             const hasSlot = !!data[state.foodSubview];
+            const pantryD = getFoodSubDisplay('pantry');
+            const fridgeD = getFoodSubDisplay('fridge');
+            const curD = state.foodSubview === 'pantry' ? pantryD : fridgeD;
             return `
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap">
                 <button id="csr-back-btn" style="border:none;background:rgba(0,0,0,.06);border-radius:10px;padding:7px 11px;font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">‹ 뒤로</button>
-                <div style="font-size:14px;font-weight:800;color:${CUTE.text}">${state.foodSubview === 'pantry' ? '팬트리' : '냉장고'}</div>
+                <div style="font-size:14px;font-weight:800;color:${CUTE.text}">${esc(curD.emoji)} ${esc(curD.label)}</div>
                 <div style="display:flex;gap:6px;margin-left:auto">
-                    <button class="csr-food-switch" data-sub="pantry" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'pantry' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">팬트리</button>
-                    <button class="csr-food-switch" data-sub="fridge" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'fridge' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">냉장고</button>
+                    <button class="csr-food-switch" data-sub="pantry" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'pantry' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">${esc(pantryD.label)}</button>
+                    <button class="csr-food-switch" data-sub="fridge" style="border:none;padding:6px 12px;border-radius:999px;font-size:10px;font-weight:800;background:${state.foodSubview === 'fridge' ? CUTE.lav : '#fff'};color:${CUTE.text};cursor:pointer">${esc(fridgeD.label)}</button>
                 </div>
             </div>
             <div style="background:#fff;border-radius:14px;padding:4px 13px;margin-bottom:10px">${renderFoodList(state.foodSubview)}</div>
@@ -790,18 +801,16 @@ function renderTab2Body() {
                 <button id="csr-food-bundle-inject-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${bundleOn ? CUTE.yellow : CUTE.lav};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${bundleOn ? '✅ 주입중' : '📡 목록 주입하기'}</button>
             </div>` : ''}`;
         }
+        const pantryD2 = getFoodSubDisplay('pantry');
+        const fridgeD2 = getFoodSubDisplay('fridge');
         return `
         <div style="display:flex;gap:8px;margin-bottom:12px">
-            <button id="csr-pantry-btn" style="flex:1;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🥫 팬트리 보기</button>
-            <button id="csr-fridge-btn" style="flex:1;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🧊 냉장고 보기</button>
+            <button id="csr-pantry-btn" style="flex:1;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${esc(pantryD2.emoji)} ${esc(pantryD2.label)} 보기</button>
+            <button id="csr-fridge-btn" style="flex:1;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${esc(fridgeD2.emoji)} ${esc(fridgeD2.label)} 보기</button>
         </div>`;
     }
     const slot = getCharData().spaces[state.currentSpace];
     return `
-    <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border-radius:14px;padding:10px 13px;margin-bottom:10px">
-        <span style="font-size:11px;color:${CUTE.text};font-weight:700">보유 포인트</span>
-        <span style="font-family:Georgia,serif;color:${CUTE.text};font-weight:700;font-size:14px">${getTotalPoints()} P</span>
-    </div>
     ${!slot ? `<button id="csr-load-space-btn" style="width:100%;padding:10px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer;margin-bottom:10px">불러오기</button>` : ''}
     <div id="csr-item-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:10px">${renderItemGrid(state.currentSpace)}</div>
     ${slot ? `<button id="csr-room-reroll-btn" style="width:100%;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 다시 채우기 (핀 제외, 새로 채워지는 건 항상 잠금)</button>` : ''}`;
@@ -868,7 +877,8 @@ function getActiveInjections() {
     }
     for (const subtype of ['pantry', 'fridge']) {
         if (data[`${subtype}BundleInjected`]) {
-            list.push({ label: subtype === 'fridge' ? '🧊 냉장고 목록 전체' : '🥫 팬트리 목록 전체', kind: 'bundle', subtype });
+            const fd = getFoodSubDisplay(subtype);
+            list.push({ label: `${fd.emoji} ${fd.label} 목록 전체`, kind: 'bundle', subtype });
         }
         for (const it of data[subtype]?.list || []) {
             if (it.injected) list.push({ label: `${it.emoji || '🍽️'} ${it.name}`, kind: 'item', item: it });
