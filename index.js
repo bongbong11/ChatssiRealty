@@ -118,8 +118,10 @@ function collectActiveInjectionText() {
 window.csrGenerateInterceptor = function (chat, _contextSize, _abort, _type) {
     try {
         const text = collectActiveInjectionText();
+        console.log(`[${MODULE_NAME}] generate_interceptor 호출됨. chat 배열?`, Array.isArray(chat), '| 주입할 텍스트 있음?', !!text, '| 텍스트:', text);
         if (text && Array.isArray(chat)) {
             chat.push({ role: 'user', content: text });
+            console.log(`[${MODULE_NAME}] 주입 완료. 최종 chat 길이:`, chat.length, '| 마지막 항목:', chat[chat.length - 1]);
         }
     } catch (e) { console.warn(`[${MODULE_NAME}] generate_interceptor 실패:`, e.message); }
 };
@@ -429,7 +431,7 @@ async function generateFoodList(subtype, isReroll = false) {
         data[subtype] = { empty: true };
     } else {
         const newList = (result.list || []).map((it) => {
-            const unlockCost = isReroll ? (it.unlockCost > 0 ? it.unlockCost : 10) : (it.unlockCost || 0);
+            const unlockCost = it.unlockCost || 0;
             return { ...it, id: uid(), unlockCost, unlocked: unlockCost === 0, pinned: false, injected: false };
         });
         data[subtype] = { empty: false, list: isReroll ? [...pinned, ...newList] : newList };
