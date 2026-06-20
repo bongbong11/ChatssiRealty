@@ -144,12 +144,15 @@ Output format: JSON only (same structure), no other text or code-block markers.
 }
 
 export function buildItemPoolPrompt(_unused, worldClass, spaceKey, spaceLabel, lang = 'ko', opts = {}) {
-  // opts.isReroll: true means only refilling unpinned slots — newly generated items must all be locked
+  // opts.isReroll: true means only refilling unpinned slots — but reroll should follow the
+  // EXACT SAME lock style as a fresh first-time generation (mostly free items, only 4-6
+  // specially-backstoried ones locked), not "everything locked".
   // opts.pinnedItems: pinned items that must be preserved as-is, not regenerated
   const rerollNote = opts.isReroll
     ? `\n⚠ Reroll mode: never regenerate the pinned items listed below — keep them exactly as
-they are. Only generate as many new items as there are slots to replace. Every newly
-generated item MUST have unlockCost > 0 (locked) — reroll never hands out free unlocks.
+they are. Only generate as many new items as there are slots to replace, following the
+EXACT SAME style as a fresh first-time generation described below (mostly free, only 4-6
+special locked items) — do NOT lock every regenerated item.
 Pinned items (keep, excluded from the count): ${JSON.stringify(opts.pinnedItems || [])}
 So the number of new items to generate = 12 - ${(opts.pinnedItems || []).length}.\n`
     : '';
@@ -171,18 +174,23 @@ Task:
    guessed items based on the character's personality/wealth level to fill exactly 12 slots
    (or, in reroll mode, the number of new items specified above).
    - Do not mark which items are confirmed vs. guessed — place them in random order.
-   - 0–1 of these may be something the character has secretly prepared as a gift for the
-     persona (the user's character). Read the relationship context (affection level, gift
-     mentions, relationship progress) and generate one if it plausibly fits; otherwise skip it.
+   - Make **4–6 (random, varies each time)** of them special items worth spending points to
+     unlock — items with a genuinely interesting backstory (a gift from someone, a secret, an
+     embarrassing memory, etc.). One of these may be something the character has secretly
+     prepared as a gift for the persona (the user's character) if the relationship context
+     (affection level, gift mentions, relationship progress) plausibly supports it; otherwise
+     skip the gift idea.
+   - All other items are ordinary, everyday belongings — these must be free (unlockCost 0),
+     just like normal inventory browsing. Don't make plain items locked for no reason.
 3. Fields for each item:
    - emoji (one emoji)
    - name
    - brand (brand / artisan / guild name — fitting the world)
    - price (local currency or the world's own currency unit)
-   - tmi (1–2 sentences. For a secret persona-gift item, write it as a secret backstory like
-     "hasn't given it yet")
-   - unlockCost (one of 5–15; the 1–2 default free slots get 0 — **in reroll mode, ALWAYS
-     5–15, never 0**)
+   - tmi (1–2 sentences of backstory for the 4-6 special items only; empty string for ordinary
+     items. For a secret persona-gift item, write it as a secret backstory like "hasn't given
+     it yet")
+   - unlockCost (0 for ordinary items; 5–15 ONLY for the 4-6 special backstory items)
    - isSecretGift (true/false)
 4. Item flavor by world — **reflect BOTH category (broad classification) and subtype
    (genre/specific setting)**:
