@@ -175,11 +175,24 @@ Task:
    (or, in reroll mode, the number of new items specified above).
    - Do not mark which items are confirmed vs. guessed — place them in random order.
    - Make **4–6 (random, varies each time)** of them special items worth spending points to
-     unlock — items with a genuinely interesting backstory (a gift from someone, a secret, an
-     embarrassing memory, etc.). One of these may be something the character has secretly
-     prepared as a gift for the persona (the user's character) if the relationship context
-     (affection level, gift mentions, relationship progress) plausibly supports it; otherwise
-     skip the gift idea.
+     unlock — items with a genuinely interesting backstory. Read the relationship context
+     (lorebook, affection level, shared memories, relationship progress, character's own
+     secrets/personality) and let it inform what kinds of backstories make sense — but this
+     does NOT mean a romantic/relationship-themed item must appear every single time. Mix
+     and match across generations, drawing from whichever fits the ACTUAL state of the
+     relationship at this point in the story:
+       · something tied to the relationship with the persona — but only if logically
+         consistent with where the relationship actually stands. E.g. if they're already
+         married/engaged, do NOT invent "a secret unproposed engagement ring" (that's a
+         contradiction) — instead it could be a genuine wedding ring with real meaning behind
+         it, a heartfelt anniversary gift, or simply skip the relationship angle that turn.
+       · something purely personal to the character themselves, unrelated to the persona
+         (a secret, an embarrassing keepsake, a sentimental object from their past, something
+         that reveals an unexpected side of them)
+     Quality matters more than hitting a theme — since unlocking costs real points, a
+     contradictory or generic/boring backstory wastes the player's points and feels cheap.
+     When in doubt, prefer a character-personal angle over forcing a relationship angle that
+     doesn't fit.
    - All other items are ordinary, everyday belongings — these must be free (unlockCost 0),
      just like normal inventory browsing. Don't make plain items locked for no reason.
 3. Fields for each item:
@@ -195,10 +208,37 @@ Task:
 4. Item flavor by world — **reflect BOTH category (broad classification) and subtype
    (genre/specific setting)**:
    - Baseline tone by category:
-     - REALISTIC → real brands/prices
-     - FANTASY → world-specific items, brand = artisan/guild name
-     - HISTORICAL → period objects + period currency
-     - MAJOR_IP/new setting (sci-fi, etc.) → that world's own brands/items
+     - REALISTIC → genuine real-world brands that actually exist (Cartier, Apple, Nike,
+       Le Creuset, etc.) — match the brand to the item's category and the character's
+       actual wealth/taste level (don't default to luxury brands for an ordinary item, and
+       don't undersell a wealthy character either)
+     - FANTASY → invented brand names that fit the world's aesthetic — never real-world
+       brands. Vary the naming style to match the world's flavor: a medieval-magic world
+       might use guild/artisan names ("Hollowmere Smithy"), a cyberpunk world might use
+       corporate-sounding names ("Nexar Dynamics"), a post-apocalyptic world might use
+       salvaged/improvised labels or pre-collapse brand remnants. Invent something new each
+       time rather than reusing the same handful of fantasy-sounding names.
+     - HISTORICAL → invented period-appropriate names matching the actual era/region (a
+       fictional royal workshop, merchant house, or artisan name styled to that specific
+       period — e.g. Joseon-era naming conventions differ completely from Victorian-era
+       English ones) — never a real modern brand, and never generic "ye olde" fantasy names
+       for a real historical setting
+     - MAJOR_IP → decide case by case using this priority:
+       1. If the franchise has its own established in-universe brand/shop for this category
+          of item, use it (e.g. Harry Potter wand → Ollivanders; Harry Potter prank item →
+          Weasleys' Wizard Wheezes; Marvel tech → Stark Industries; a real-world-set
+          military franchise like Call of Duty → genuine real-world tactical/gear brands
+          such as Oakley, 5.11 Tactical, since that franchise's world IS the real world)
+       2. If no canon brand exists for this specific item type, invent one that matches the
+          franchise's in-universe naming conventions and tone (not generic real-world or
+          generic fantasy names — make it feel like it belongs in that specific universe)
+       3. For franchises split into many sub-series with different settings/eras (space
+          opera vs. modern military vs. fantasy spin-off of the same IP), match the brand
+          style to whichever specific sub-setting was identified in subtype/location_hint —
+          don't default to one sub-series' aesthetic for all of them
+     Across all categories, favor variety over repetition — avoid reusing the same few
+     brand names across different generations for the same world; invent fresh ones each time
+     while staying internally consistent with the established world.
    - **Detail by subtype (specific genre) — even with the same category, item types must
      differ completely depending on subtype**: e.g. if subtype is "zombie apocalypse", lean
      toward survival gear/armor/emergency rations; "cyberpunk" → implants/hacking gear/neon
@@ -254,7 +294,14 @@ water; "cyberpunk" → synthetic food/energy bars; "medieval magic fantasy" → 
 fruit/herbs; Joseon-era → fermented sauces/grains, etc.). Unless the world is REALISTIC, never
 default to modern supermarket groceries — it will feel out of place for the genre.
 Make **only 2–3** of them special items with a "why is this even here?" surprising/funny
-detail (regardless of price, based on the character's personality/backstory).
+detail. Read the relationship context (lorebook, affection level, shared memories,
+relationship progress) and the character's own personality/secrets to inform these — but
+don't force a relationship-themed item every time, and never invent something that
+contradicts where the relationship actually stands (e.g. "secretly saving this for a
+proposal" makes no sense if they're already married). Mix items tied to the persona
+relationship with items purely personal to the character, whichever genuinely fits the
+current story state — a contradictory or generic backstory wastes the points it costs to
+unlock, so prioritize fit over forcing a theme.
 Only these special items get an unlockCost (5–15) — **the name itself is also meant to stay
 hidden until unlocked. That just means: write the real name normally in the name field as
 usual; the client will replace it with "???" on screen whenever unlockCost > 0, so you don't
