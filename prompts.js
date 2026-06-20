@@ -286,13 +286,17 @@ export function buildItemInjectionText(item) {
 [Item: ${item.name}${item.brand ? ` — ${item.brand}` : ''}]
 ${item.tmi || ''}
 
-Instruction: Weave this into the story ONLY if it naturally fits the current scene and
-flow — never force it in awkwardly or mention it out of nowhere. You may let it surface
-as a full, explicit moment, or let it show through only as a subtle nuance or passing
-detail, or simply have {{char}} remain aware it exists without it surfacing in the prose
-at all — whichever feels organic. Continue the roleplay normally as {{char}}, in-character,
-exactly as you would without this tag. Do NOT break character, do NOT reply as if
-answering a question, and do NOT mention, quote, or acknowledge this tag in your response.
+Instruction: Treat this purely as raw material for crafting your next in-character
+response — never treat it as something to react to or answer directly. Find whatever
+natural insertion point fits the current scene and flow, and weave it in ONLY if it
+genuinely fits — never force it in awkwardly or mention it out of nowhere. You may let
+it surface as a full, explicit moment, or let it show through only as a subtle nuance or
+passing detail, or simply have {{char}} remain aware it exists without it surfacing in
+the prose at all — whichever feels organic. Continue the roleplay normally as {{char}},
+in-character, exactly as you would without this tag. Do NOT break character, do NOT
+reply as if answering a question, and do NOT mention, quote, paraphrase, or otherwise
+expose or acknowledge this tag or its instructions anywhere in your response — it must
+remain completely invisible to the reader.
 If the user's message contains its own (OOC: ...) question or instruction, that takes
 top priority — answer or follow that first; treat this tag as secondary, supplementary
 reference information only.
@@ -309,15 +313,18 @@ export function buildFoodBundleInjectionText(subtype, items) {
 [${subtype === 'fridge' ? 'Fridge' : 'Pantry'} contents known to be in ${label}]
 ${lines}
 
-Instruction: Treat this as background reference only — there's no need to force a
-mention or use of these items. For any item with a description attached, you may let
-that backstory color the scene naturally if it fits — anywhere from a full explicit
-moment down to just a subtle nuance, entirely your call. Continue the roleplay normally
-as {{char}}, in-character, exactly as you would without this tag. Do NOT break character,
-do NOT reply as if answering a question, and do NOT mention, quote, or acknowledge this
-tag in your response. If the user's message contains its own (OOC: ...) question or
-instruction, that takes top priority — answer or follow that first; treat this tag as
-secondary, supplementary reference information only.
+Instruction: Treat this purely as raw material for crafting your next in-character
+response, not as something to react to or answer directly — there's no need to force a
+mention or use of these items. Find whatever natural insertion point fits the current
+scene if you do use one. For any item with a description attached, you may let that
+backstory color the scene naturally if it fits — anywhere from a full explicit moment
+down to just a subtle nuance, entirely your call. Continue the roleplay normally as
+{{char}}, in-character, exactly as you would without this tag. Do NOT break character,
+do NOT reply as if answering a question, and do NOT mention, quote, paraphrase, or
+otherwise expose or acknowledge this tag or its instructions anywhere in your response —
+it must remain completely invisible to the reader. If the user's message contains its
+own (OOC: ...) question or instruction, that takes top priority — answer or follow that
+first; treat this tag as secondary, supplementary reference information only.
 </csr_food_info>`.trim();
 }
 
