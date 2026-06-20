@@ -309,16 +309,25 @@ function spinRoulette(bet) {
 // ─── AI 호출 ────────────────────────────────
 // 프로필 선택 시: 직접 모은 컨텍스트(캐릭터시트/페르소나/최근 챗) + 프롬프트를 ConnectionManager로 전송
 // 프로필 미선택 시: generateQuietPrompt로 ST가 로어북/AN/챗을 자동으로 섞어서 생성 (현재 연결 사용)
-function buildManualContext() {
+async function buildManualContext() {
     const ctx = SillyTavern.getContext();
     const char = ctx.characters?.[ctx.characterId];
     const charDesc = [char?.description, char?.personality, char?.scenario].filter(Boolean).join('\n').slice(0, 1200);
     const personaName = ctx.name1 || '';
     const personaDesc = (ctx.powerUserSettings?.persona_description || '').slice(0, 500);
     const recentChat = (ctx.chat || []).slice(-15).map((m) => `${m.is_user ? (personaName || '유저') : (char?.name || 'AI')}: ${m.mes}`).join('\n').slice(0, 3000);
+    // 로어북(월드인포) — isDryRun=true로 호출해서 실제 생성 이벤트(WORLD_INFO_ACTIVATED 등)는
+    // 안 발생시키고 텍스트만 가져옴. 현재 챗 내용 기준으로 키워드 매칭된 엔트리만 반영됨.
+    let worldInfo = '';
+    try {
+        const wi = await ctx.getWorldInfoPrompt?.(ctx.chat || [], 4096, true);
+        worldInfo = (wi?.worldInfoString || '').slice(0, 2500);
+        console.log(`[${MODULE_NAME}] 로어북 조회 결과 — 매칭된 텍스트 길이: ${worldInfo.length}자`, worldInfo ? `\n내용 미리보기:\n${worldInfo.slice(0, 300)}${worldInfo.length > 300 ? '...' : ''}` : '(매칭된 엔트리 없음 — 키워드가 현재 채팅에 안 걸렸거나 로어북이 비어있을 수 있음)');
+    } catch (e) { console.warn(`[${MODULE_NAME}] 로어북 읽기 실패:`, e.message); }
     return [
         charDesc ? `[캐릭터 시트]\n${charDesc}` : '',
         personaDesc ? `[페르소나: ${personaName}]\n${personaDesc}` : '',
+        worldInfo ? `[로어북]\n${worldInfo}` : '',
         recentChat ? `[최근 대화]\n${recentChat}` : '',
     ].filter(Boolean).join('\n\n');
 }
@@ -331,7 +340,7 @@ async function callAI(prompt) {
         const profiles = ctx.extensionSettings?.['connectionManager']?.profiles || [];
         const profile = profiles.find((p) => p.name === profileName);
         if (profile) {
-            const context = buildManualContext();
+            const context = await buildManualContext();
             const content = context ? `${context}\n\n${prompt}` : prompt;
             const response = await ctx.ConnectionManagerRequestService.sendRequest(
                 profile.id, [{ role: 'user', content }], s.maxTokens || 4000,
