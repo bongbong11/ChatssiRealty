@@ -1,9 +1,10 @@
 {
-  "display_name": "챗씨부동산",
+  "display_name": "그남의 집",
   "loading_order": 10,
   "requires": [],
   "optional": ["Chatleroyal"],
   "js": "index.js",
+  "generate_interceptor": "csrGenerateInterceptor",
   "author": "봉봉",
   "version": "0.1.0",
   "homePage": "https://github.com/bongbong11/ChatssiRealty",
