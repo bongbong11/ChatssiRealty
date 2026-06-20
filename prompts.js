@@ -148,6 +148,8 @@ export function buildItemPoolPrompt(_unused, worldClass, spaceKey, spaceLabel, l
   // EXACT SAME lock style as a fresh first-time generation (mostly free items, only 4-6
   // specially-backstoried ones locked), not "everything locked".
   // opts.pinnedItems: pinned items that must be preserved as-is, not regenerated
+  // opts.existingNames: names of ALL items currently shown in this space (pinned or not) —
+  // purely for duplicate-avoidance context, not saved/persisted anywhere by us.
   const rerollNote = opts.isReroll
     ? `\n⚠ Reroll mode: never regenerate the pinned items listed below — keep them exactly as
 they are. Only generate as many new items as there are slots to replace, following the
@@ -155,6 +157,14 @@ EXACT SAME style as a fresh first-time generation described below (mostly free, 
 special locked items) — do NOT lock every regenerated item.
 Pinned items (keep, excluded from the count): ${JSON.stringify(opts.pinnedItems || [])}
 So the number of new items to generate = 12 - ${(opts.pinnedItems || []).length}.\n`
+    : '';
+  const existingNote = (opts.existingNames && opts.existingNames.length)
+    ? `\n⚠ Avoid duplicates: items already present in this space right now are:
+${JSON.stringify(opts.existingNames)}. This means more than just avoiding identical name
+strings — also avoid generating something that's conceptually the SAME object just phrased
+differently (e.g. if "electric guitar" already exists, don't add "an electric guitar" worded
+another way, or a near-synonymous variant of it). Every newly generated item must be a
+genuinely distinct object/concept, not a reworded duplicate.\n`
     : '';
   return `
 Role: Belongings inventory generator.
@@ -166,7 +176,7 @@ Refer to the character sheet, persona, lorebook, and recent chat history of this
 
 World classification result: ${JSON.stringify(worldClass)}
 Target space: ${spaceKey} (${spaceLabel})
-${rerollNote}
+${rerollNote}${existingNote}
 Task:
 1. First decide how this space exists (if at all) in the current world/era. If it doesn't
    exist or makes no sense, return only { "empty": true, "emptyReason": "..." } and stop.
@@ -277,6 +287,14 @@ backstory and unlockCost (5-15). Do NOT lock every regenerated item — only tho
 special ones should be locked, exactly like in a normal first-time generation.
 Pinned items (keep): ${JSON.stringify(opts.pinnedItems || [])}\n`
     : '';
+  const existingNote = (opts.existingNames && opts.existingNames.length)
+    ? `\n⚠ Avoid duplicates: items already present right now are:
+${JSON.stringify(opts.existingNames)}. This means more than just avoiding identical name
+strings — also avoid generating something that's conceptually the SAME item just phrased
+differently (e.g. if "kimchi" already exists, don't add "pickled cabbage" as a reworded
+duplicate of it). Every newly generated item must be a genuinely distinct food/object, not
+a reworded duplicate.\n`
+    : '';
   return `
 Role: Food/grocery list generator.
 ${INFO_BLOCK_GUARD}
@@ -287,7 +305,7 @@ Refer to the character sheet, persona, lorebook, and recent chat history of this
 
 World classification result: ${JSON.stringify(worldClass)}
 Target: ${subtype === "fridge" ? "fridge" : "pantry"}
-${rerollNote}
+${rerollNote}${existingNote}
 Task: Generate about 8–10 food items, **matching the world's category and subtype (genre)**
 (e.g. if subtype is "zombie apocalypse", lean toward canned goods/emergency rations/bottled
 water; "cyberpunk" → synthetic food/energy bars; "medieval magic fantasy" → smoked meat/dried
