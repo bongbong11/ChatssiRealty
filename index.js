@@ -21,7 +21,7 @@ const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
 const BASE_POINTS = 100;
 const REFILL_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3시간
-const REFILL_AMOUNT = 10;
+const REFILL_AMOUNT = 30;
 const ROULETTE_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1시간마다 한 번
 // 보상이 클수록 당첨 확률(weight)은 낮아짐 — 합 100 기준 비중
 const ROULETTE_OUTCOMES = [
