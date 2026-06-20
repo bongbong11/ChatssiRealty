@@ -900,9 +900,9 @@ function showRoulettePopup() {
     const onCooldown = cooldownMs > 0;
     const modal = document.createElement('div');
     modal.id = 'csr-roulette-popup';
-    modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10900;display:flex;align-items:center;justify-content:center;padding:16px`;
+   modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10900;`;
     modal.innerHTML = `
-      <div style="background:${DEED.bgCard};border-radius:18px;padding:20px 16px;max-width:300px;width:100%;text-align:center;position:relative">
+      <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:${DEED.bgCard};border-radius:18px;padding:20px 16px;max-width:300px;width:calc(100% - 32px);text-align:center;box-sizing:border-box">
         <button id="csr-roulette-close" style="position:absolute;top:10px;right:10px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
         <h3 style="font-family:'Georgia',serif;margin:0 0 4px;color:${DEED.ink};font-size:15px">🎰 포인트 룰렛</h3>
         <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-bottom:14px">3시간마다 1회 · 자체 보유 ${s.points}P</div>
@@ -920,7 +920,7 @@ function showRoulettePopup() {
                 <button id="csr-roulette-spin-btn" style="padding:8px 14px;border:none;border-radius:10px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:12px;cursor:pointer" ${s.points <= 0 ? 'disabled' : ''}>스핀</button>
               </div>`}
         <div id="csr-roulette-result" style="font-size:12px;font-weight:800;color:${DEED.ink};min-height:18px"></div>
-      </div>`;
+      </div>`; // 여기까지만 수정 후 적용하시면 됩니다!
     document.body.appendChild(modal);
     document.getElementById('csr-roulette-close')?.addEventListener('click', () => modal.remove());
     modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
