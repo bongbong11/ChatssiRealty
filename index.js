@@ -504,7 +504,9 @@ async function generateItemPool(spaceKey, isReroll = false) {
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
     const existing = data.spaces[spaceKey];
     const pinned = (isReroll && existing && !existing.empty) ? existing.items.filter((it) => it.pinned) : [];
-    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })) };
+    // 중복 방지용 — 저장은 안 하고 이번 생성 호출에만 참고시킴
+    const existingNames = (existing && !existing.empty) ? existing.items.map((it) => it.name).filter(Boolean) : [];
+    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })), existingNames };
 
     const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, displayLabel, lang, opts)));
     if (!result) return null;
@@ -543,7 +545,8 @@ async function generateFoodList(subtype, isReroll = false) {
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
     const existing = data[subtype];
     const pinned = (isReroll && existing && !existing.empty) ? existing.list.filter((it) => it.pinned) : [];
-    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name })) };
+    const existingNames = (existing && !existing.empty) ? existing.list.map((it) => it.name).filter(Boolean) : [];
+    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name })), existingNames };
 
     const result = parseJSON(await callAI(buildFoodListPrompt('', worldClass, subtype, lang, opts)));
     if (!result) return null;
