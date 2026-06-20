@@ -623,11 +623,17 @@ function showHistoryPopup(idx) {
             ${card.appendix.map((a) => `<li>${esc(a)}</li>`).join('')}
         </ul>`
         : '';
+    // 룰렛/아이템모달 방식과 동일: flex 중앙정렬+inset:0 대신 창 크기 기준 top/left를 미리 계산해서
+    // 고정 배치 — 모바일 뷰포트 변화로 위로 솟구쳐서 안 내려오는 문제 방지.
+    const mw = Math.min(340, window.innerWidth * 0.9);
+    const ml = Math.max(10, (window.innerWidth - mw) / 2);
+    const mt = Math.max(10, Math.min(window.innerHeight * 0.1, window.innerHeight - 500));
+    const mh = Math.min(window.innerHeight * 0.8, window.innerHeight - mt - 10);
+
     const modal = document.createElement('div');
     modal.id = 'csr-history-popup';
-    modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10800;display:flex;align-items:center;justify-content:center;padding:16px`;
+    modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;max-height:${mh}px;overflow-y:auto;background:${DEED.bgCard};border-radius:16px;padding:18px 16px;font-family:system-ui;z-index:10800;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
     modal.innerHTML = `
-        <div style="background:${DEED.bgCard};border-radius:16px;padding:18px 16px;max-width:340px;max-height:80vh;overflow-y:auto;position:relative">
             <button id="csr-history-popup-close" style="position:absolute;top:10px;right:10px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
             <h3 style="font-family:'Georgia',serif;margin:0 0 12px;color:${DEED.ink};font-size:15px">📦 이전 거주지</h3>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 12px">
@@ -650,11 +656,9 @@ function showHistoryPopup(idx) {
                 <div style="font-size:10px;font-weight:800;color:${DEED.gold};margin-bottom:5px">🏷 집 이야기</div>
                 <p style="margin:0;font-size:11px;color:${DEED.ink};line-height:1.6;opacity:.9">${esc(card.story)}</p>
             </div>
-            ${appendixHtml}
-        </div>`;
+            ${appendixHtml}`;
     document.body.appendChild(modal);
     document.getElementById('csr-history-popup-close')?.addEventListener('click', () => modal.remove());
-    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
 }
 function renderDeed() {
     const data = getCharData();
