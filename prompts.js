@@ -383,27 +383,32 @@ ${BREAK_CHARACTER_GUARD}
 ${langInstruction(lang)}
 
 World classification result: ${JSON.stringify(worldClass)}
-Current (default/realistic) labels for 7 FIXED functional categories: ${JSON.stringify(currentLabels)}
+Current (default/realistic) labels for FIXED functional categories: ${JSON.stringify(currentLabels)}
 
-Task: These 7 categories represent fixed FUNCTIONS (a food-storage room, a common/social room,
+Task: These categories represent fixed FUNCTIONS (a food-storage room, a common/social room,
 a hygiene room, a sleeping room, a knowledge/hobby room, a vehicle-storage room, a general
-storage room) — the function itself never changes, only what it's CALLED and which emoji
-represents it changes to fit the world/era/genre. For each category, give the closest
-functional equivalent's name in that world — never say something "doesn't exist"; always
-find the era/genre-appropriate equivalent (e.g. for a "vehicle storage" category in a
-medieval setting, that becomes a stable; in a zombie apocalypse, a fortified vehicle bay;
-in REALISTIC/modern settings, just keep the original default label as-is).
+storage room, plus two food-storage SUB-categories: a dry/non-perishable food storage spot,
+and a cold/perishable food storage spot) — the function itself never changes, only what it's
+CALLED and which emoji represents it changes to fit the world/era/genre. For each category,
+give the closest functional equivalent's name in that world — never say something "doesn't
+exist"; always find the era/genre-appropriate equivalent (e.g. for a "vehicle storage"
+category in a medieval setting, that becomes a stable; for the "cold storage" sub-category
+in a medieval setting with no refrigeration, that becomes a root cellar or cold pantry; in a
+zombie apocalypse, "vehicle storage" becomes a fortified vehicle bay; in REALISTIC/modern
+settings, just keep the original default label as-is).
 If the world classification is REALISTIC, just return the current default labels unchanged.
 
 ${langInstructionStrong(lang)}
 
 Output format: JSON only, no other text or code-block markers. Keys must stay exactly
-"kitchen","living","bath","bedroom","study","garage","storage" — only change "label" and
-"emoji" values.
+"kitchen","living","bath","bedroom","study","garage","storage","pantry","fridge" — only
+change "label" and "emoji" values. "pantry" = dry/non-perishable storage, "fridge" =
+cold/perishable storage (both nested under the kitchen's food-storage function).
 { "kitchen": {"label":"", "emoji":""}, "living": {"label":"", "emoji":""},
   "bath": {"label":"", "emoji":""}, "bedroom": {"label":"", "emoji":""},
   "study": {"label":"", "emoji":""}, "garage": {"label":"", "emoji":""},
-  "storage": {"label":"", "emoji":""} }
+  "storage": {"label":"", "emoji":""}, "pantry": {"label":"", "emoji":""},
+  "fridge": {"label":"", "emoji":""} }
 `.trim();
 }
 
