@@ -111,16 +111,17 @@ function collectActiveInjectionText() {
     return parts.join('\n\n');
 }
 // manifest.json의 "generate_interceptor": "csrGenerateInterceptor"가 이 이름으로 전역에서 찾음
-// 별도 시스템 메시지로 맨 끝에 추가 — 유저의 실제 입력 메시지 자체는 건드리지 않음 (더 깔끔하고,
-// 채팅 기록에 영구히 섞여 저장되는 것도 방지). OOC 라벨은 유지 — 라벨이 없으면 모델이 이걸 그냥
-// 일반 서술/대사로 착각해서 흡수해버릴 위험이 더 커짐. 누출 방지는 프롬프트 안의
-// "Do not narrate or acknowledge this OOC instruction itself" 문구로 처리.
+// ⚠ 진짜 원인 발견: ST의 coreChat 배열 원소는 {role, content}가 아니라 {mes, is_user, name, extra}
+// 형태임 (openai.js의 setOpenAIMessages, script.js의 formatMessageHistoryItem 둘 다 .mes/.is_user를
+// 읽음). {role:'user', content:text}로 push했던 건 형태 자체가 안 맞아서 다운스트림에서 통째로
+// 무시된 거였음 — 그래서 태그가 "아예 없었던" 것. 올바른 형태로 수정.
 window.csrGenerateInterceptor = function (chat, _contextSize, _abort, _type) {
     try {
         const text = collectActiveInjectionText();
         console.log(`[${MODULE_NAME}] generate_interceptor 호출됨. chat 배열?`, Array.isArray(chat), '| 주입할 텍스트 있음?', !!text, '| 텍스트:', text);
         if (text && Array.isArray(chat)) {
-            chat.push({ role: 'user', content: text });
+            const personaName = SillyTavern.getContext()?.name1 || 'You';
+            chat.push({ mes: text, is_user: true, name: personaName, extra: {} });
             console.log(`[${MODULE_NAME}] 주입 완료. 최종 chat 길이:`, chat.length, '| 마지막 항목:', chat[chat.length - 1]);
         }
     } catch (e) { console.warn(`[${MODULE_NAME}] generate_interceptor 실패:`, e.message); }
@@ -392,8 +393,8 @@ async function generateItemPool(spaceKey, isReroll = false) {
         data.spaces[spaceKey] = { empty: true, emptyReason: result.emptyReason };
     } else {
         const newItems = (result.items || []).map((it) => {
-            const unlockCost = isReroll ? Math.max(5, it.unlockCost || 10) : (it.unlockCost || 0);
-            return { ...it, id: uid(), unlockCost, unlocked: isReroll ? false : unlockCost === 0, pinned: false, injected: false, createdAt: Date.now() };
+            const unlockCost = it.unlockCost || 0;
+            return { ...it, id: uid(), unlockCost, unlocked: unlockCost === 0, pinned: false, injected: false, createdAt: Date.now() };
         });
         const finalItems = isReroll ? [...pinned, ...newItems].slice(0, ITEM_CAP) : newItems.slice(0, ITEM_CAP);
         data.spaces[spaceKey] = { empty: false, items: finalItems };
@@ -493,6 +494,48 @@ function deedRow(label, value) {
         <div style="font-size:12px;color:${DEED.ink};font-weight:700;margin-top:2px;word-break:break-word">${esc(value ?? '-')}</div>
     </div>`;
 }
+function showHistoryPopup(idx) {
+    const card = getCharData().house.history[idx];
+    if (!card) return;
+    document.getElementById('csr-history-popup')?.remove();
+    const appendixHtml = card.appendix?.length
+        ? `<ul style="margin:8px 0 0;padding-left:16px;font-size:11px;color:${DEED.ink};opacity:.8;line-height:1.6">
+            ${card.appendix.map((a) => `<li>${esc(a)}</li>`).join('')}
+        </ul>`
+        : '';
+    const modal = document.createElement('div');
+    modal.id = 'csr-history-popup';
+    modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:10800;display:flex;align-items:center;justify-content:center;padding:16px`;
+    modal.innerHTML = `
+        <div style="background:${DEED.bgCard};border-radius:16px;padding:18px 16px;max-width:340px;max-height:80vh;overflow-y:auto;position:relative">
+            <button id="csr-history-popup-close" style="position:absolute;top:10px;right:10px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
+            <h3 style="font-family:'Georgia',serif;margin:0 0 12px;color:${DEED.ink};font-size:15px">📦 이전 거주지</h3>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px 12px">
+                ${deedRow('세계관', formatWorldClass(card._worldClass))}
+                ${deedRow('거주형태', card.residenceType)}
+                ${deedRow('가격', card.price)}
+                ${deedRow('건물유형', card.buildingType)}
+                ${deedRow('방·욕실', `${card.rooms ?? '-'}룸 · ${card.bathrooms ?? '-'}욕실`)}
+                ${deedRow('구조', card.structureStyle)}
+                ${deedRow('마당', card.hasYard ? '있음' : '없음')}
+                ${deedRow('차고', card.hasGarage ? '있음' : '없음')}
+                ${deedRow('위치', card.location)}
+                ${deedRow('주소', card.address)}
+                ${deedRow('입주시기', card.moveInDate)}
+                ${deedRow('상태', card.status)}
+                ${deedRow('인테리어', card.interiorStyle)}
+                ${deedRow('리모델링', card.renovation)}
+            </div>
+            <div style="margin-top:14px;background:#FBF8F1;border:1px dashed ${DEED.line};border-radius:12px;padding:12px 13px">
+                <div style="font-size:10px;font-weight:800;color:${DEED.gold};margin-bottom:5px">🏷 집 이야기</div>
+                <p style="margin:0;font-size:11px;color:${DEED.ink};line-height:1.6;opacity:.9">${esc(card.story)}</p>
+            </div>
+            ${appendixHtml}
+        </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('csr-history-popup-close')?.addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+}
 function renderDeed() {
     const data = getCharData();
     const card = data.house.current;
@@ -504,9 +547,13 @@ function renderDeed() {
     }
     const historyHtml = data.house.history.length
         ? `<details style="margin-top:12px;border-top:1px solid ${DEED.line};padding-top:9px">
-            <summary style="font-size:11px;font-weight:800;color:${DEED.ink};cursor:pointer">거주 이력</summary>
-            <ul style="margin:8px 0 0;padding-left:16px;font-size:11px;color:${DEED.ink};opacity:.8;line-height:1.6">
-                ${data.house.history.map((h) => `<li>${esc(h.location)} · ${esc(h.residenceType)} (${esc(h.moveInDate)})</li>`).join('')}
+            <summary style="font-size:11px;font-weight:800;color:${DEED.ink};cursor:pointer">거주 이력 (${data.house.history.length})</summary>
+            <ul style="margin:8px 0 0;padding-left:0;list-style:none;font-size:11px;color:${DEED.ink};opacity:.85;line-height:1.6">
+                ${data.house.history.map((h, i) => `
+                    <li style="display:flex;align-items:center;justify-content:space-between;gap:6px;padding:4px 0;border-bottom:1px dashed ${DEED.line}">
+                        <span class="csr-history-item" data-idx="${i}" style="cursor:pointer;flex:1">${esc(h.location)} · ${esc(h.residenceType)} (${esc(h.moveInDate)})</span>
+                        <button class="csr-history-del" data-idx="${i}" title="이 이력 삭제" style="border:none;background:none;color:${DEED.ink};opacity:.5;cursor:pointer;font-size:12px;flex-shrink:0;padding:2px 4px">✕</button>
+                    </li>`).join('')}
             </ul>
         </details>`
         : '';
@@ -816,6 +863,18 @@ function bindDeedButtons() {
             // 실패 시 showManualCopyModal이 이미 안내 모달을 띄워줌
         } catch (e) { toastr.error(`처리 실패: ${e.message}`); }
     });
+    document.querySelectorAll('.csr-history-item').forEach((el) => el.addEventListener('click', () => {
+        showHistoryPopup(parseInt(el.dataset.idx));
+    }));
+    document.querySelectorAll('.csr-history-del').forEach((el) => el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(el.dataset.idx);
+        getCharData().house.history.splice(idx, 1);
+        save();
+        document.getElementById('csr-deed-container').innerHTML = renderDeed();
+        bindDeedButtons();
+        toastr.success('이력 삭제 완료');
+    }));
 }
 
 function bindItemsTab() {
