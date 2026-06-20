@@ -320,7 +320,11 @@ async function buildManualContext() {
     // 안 발생시키고 텍스트만 가져옴. 현재 챗 내용 기준으로 키워드 매칭된 엔트리만 반영됨.
     let worldInfo = '';
     try {
-        const wi = await ctx.getWorldInfoPrompt?.(ctx.chat || [], 4096, true);
+        // getWorldInfoPrompt가 내부적으로 messages[depth].trim()을 호출하므로, chat 객체 배열이
+        // 아니라 .mes 텍스트만 뽑은 "문자열 배열"을 역순(최근 메시지가 depth 0)으로 넘겨야 함.
+        // (script.js의 실제 호출부: coreChat.map(x => x.mes).reverse() 패턴과 동일하게 맞춤)
+        const chatForWI = (ctx.chat || []).map((m) => m?.mes || '').reverse();
+        const wi = await ctx.getWorldInfoPrompt?.(chatForWI, 4096, true);
         worldInfo = (wi?.worldInfoString || '').slice(0, 2500);
         console.log(`[${MODULE_NAME}] 로어북 조회 결과 — 매칭된 텍스트 길이: ${worldInfo.length}자`, worldInfo ? `\n내용 미리보기:\n${worldInfo.slice(0, 300)}${worldInfo.length > 300 ? '...' : ''}` : '(매칭된 엔트리 없음 — 키워드가 현재 채팅에 안 걸렸거나 로어북이 비어있을 수 있음)');
     } catch (e) { console.warn(`[${MODULE_NAME}] 로어북 읽기 실패:`, e.message); }
