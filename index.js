@@ -898,14 +898,21 @@ function showRoulettePopup() {
     const s = getSettings();
     const cooldownMs = getRouletteCooldownRemaining();
     const onCooldown = cooldownMs > 0;
+
+    // 챗틀로얄/아이템모달 방식과 동일: flex 중앙정렬+inset:0 대신 창 크기 기준 top/left를 미리 계산해서
+    // 고정 배치 — 모바일에서 숫자 입력창에 키보드가 뜨며 뷰포트가 바뀌어도 모달이 위로 솟구쳐서
+    // 안 내려오는 문제를 방지함.
+    const mw = Math.min(300, window.innerWidth * 0.9);
+    const ml = Math.max(10, (window.innerWidth - mw) / 2);
+    const mt = Math.max(10, Math.min(window.innerHeight * 0.12, window.innerHeight - 420));
+
     const modal = document.createElement('div');
     modal.id = 'csr-roulette-popup';
-   modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10900;`;
+    modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;background:${DEED.bgCard};border-radius:18px;padding:20px 16px;text-align:center;font-family:system-ui;z-index:10900;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
     modal.innerHTML = `
-      <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:${DEED.bgCard};border-radius:18px;padding:20px 16px;max-width:300px;width:calc(100% - 32px);text-align:center;box-sizing:border-box">
-        <button id="csr-roulette-close" style="position:absolute;top:10px;right:10px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
+        <button id="csr-roulette-close" style="position:absolute;top:10px;right:12px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
         <h3 style="font-family:'Georgia',serif;margin:0 0 4px;color:${DEED.ink};font-size:15px">🎰 포인트 룰렛</h3>
-        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-bottom:14px">3시간마다 1회 · 자체 보유 ${s.points}P</div>
+        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-bottom:14px">1시간마다 1회 · 자체 보유 ${s.points}P</div>
         <div style="position:relative;width:170px;height:170px;margin:0 auto 16px">
           <div id="csr-roulette-wheel" style="width:170px;height:170px;border-radius:50%;background:${buildRouletteGradient()};border:4px solid ${DEED.ink};transition:transform 3s cubic-bezier(.17,.67,.12,.99)"></div>
           <div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-top:16px solid ${DEED.ink}"></div>
@@ -920,10 +927,9 @@ function showRoulettePopup() {
                 <button id="csr-roulette-spin-btn" style="padding:8px 14px;border:none;border-radius:10px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:12px;cursor:pointer" ${s.points <= 0 ? 'disabled' : ''}>스핀</button>
               </div>`}
         <div id="csr-roulette-result" style="font-size:12px;font-weight:800;color:${DEED.ink};min-height:18px"></div>
-      </div>`; // 여기까지만 수정 후 적용하시면 됩니다!
+    `;
     document.body.appendChild(modal);
     document.getElementById('csr-roulette-close')?.addEventListener('click', () => modal.remove());
-    modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
 
     document.getElementById('csr-roulette-spin-btn')?.addEventListener('click', () => {
         const betInput = document.getElementById('csr-roulette-bet');
@@ -1136,7 +1142,7 @@ function createFloatingPanel() {
             <span style="font-size:16px">🏠</span>
             <div style="flex:1;font-weight:800;color:${DEED.bg};font-size:13px">그남의 집</div>
             <button id="csr-header-inject-btn" style="font-weight:700;font-size:11px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 9px;cursor:pointer">📡 0</button>
-            <button id="csr-header-roulette-btn" title="포인트 룰렛 (3시간마다 1회)" style="font-weight:700;font-size:12px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 7px;cursor:pointer">🎰</button>
+            <button id="csr-header-roulette-btn" title="포인트 룰렛 (1시간마다 1회)" style="font-weight:700;font-size:12px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 7px;cursor:pointer">🎰</button>
             <span id="csr-header-pts" style="font-family:Georgia,serif;font-weight:700;font-size:12px;color:${DEED.gold};background:rgba(255,255,255,.1);border-radius:8px;padding:3px 9px">${getTotalPoints()} P</span>
             <button id="csr-close" style="background:none;border:1px solid ${DEED.bg}55;border-radius:4px;color:${DEED.bg};cursor:pointer;font-size:12px;padding:2px 7px">✕</button>
         </div>
