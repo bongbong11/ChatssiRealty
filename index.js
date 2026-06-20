@@ -12,6 +12,7 @@ import {
     buildItemPoolPrompt,
     buildFoodListPrompt,
     buildLorebookExportPrompt,
+    buildSpaceLabelsPrompt,
     buildItemInjectionText,
     buildFoodBundleInjectionText,
 } from './prompts.js';
@@ -20,7 +21,7 @@ const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
 const BASE_POINTS = 100;
 const REFILL_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3시간
-const REFILL_AMOUNT = 10;
+const REFILL_AMOUNT = 30;
 const ROULETTE_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1시간마다 한 번
 // 보상이 클수록 당첨 확률(weight)은 낮아짐 — 합 100 기준 비중
 const ROULETTE_OUTCOMES = [
@@ -421,6 +422,28 @@ async function exportLorebook() {
     return await callAI(buildLorebookExportPrompt(cardForExport, lang));
 }
 
+// 탭2 고정 공간(주방/거실/욕실/침실/서재/차고/창고)의 "기능"은 안 바뀌고 "이름/이모지"만
+// 세계관에 맞게 바뀜 — 집 생성 후 유저가 명시적으로 버튼을 눌러야 적용됨 (자동 아님)
+async function applyWorldLabelsToSpaces() {
+    const lang = getSettings().outputLanguage || 'ko';
+    const data = getCharData();
+    const worldClass = data.house.current?._worldClass;
+    if (!worldClass) { toastr.warning('먼저 집을 생성해주세요 (세계관 정보가 필요해요).'); return false; }
+    const currentLabels = Object.fromEntries(SPACES.map((s) => [s.key, { label: s.label, emoji: s.emoji }]));
+    const result = parseJSON(await callAI(buildSpaceLabelsPrompt(worldClass, currentLabels, lang)));
+    if (!result) { toastr.error('명칭 변경에 실패했어요 (AI 응답을 JSON으로 해석하지 못함).'); return false; }
+    data.spaceLabels = result;
+    save();
+    toastr.success('세계관에 맞게 탭2 이름이 바뀌었어요!');
+    return true;
+}
+// 실제 화면에 표시할 라벨/이모지 — 변경된 게 있으면 그걸, 없으면 기본값
+function getSpaceDisplay(spaceKey) {
+    const def = SPACES.find((s) => s.key === spaceKey);
+    const override = getCharData().spaceLabels?.[spaceKey];
+    return { label: override?.label || def.label, emoji: override?.emoji || def.emoji, food: def.food };
+}
+
 // 클립보드 쓰기 — 비동기 AI 호출 후라 유저 제스처(transient activation)가 만료돼서
 // navigator.clipboard.writeText가 막힐 수 있음 → execCommand 폴백, 그래도 안 되면 수동복사 모달
 async function copyToClipboard(text) {
@@ -467,7 +490,7 @@ function showManualCopyModal(text) {
 
 // ─── 아이템 풀 ──────────────────────────────
 async function generateItemPool(spaceKey, isReroll = false) {
-    const space = SPACES.find((s) => s.key === spaceKey);
+    const displayLabel = getSpaceDisplay(spaceKey).label;
     const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
@@ -475,7 +498,7 @@ async function generateItemPool(spaceKey, isReroll = false) {
     const pinned = (isReroll && existing && !existing.empty) ? existing.items.filter((it) => it.pinned) : [];
     const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })) };
 
-    const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, space.label, lang, opts)));
+    const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, displayLabel, lang, opts)));
     if (!result) return null;
 
     if (result.empty) {
@@ -680,6 +703,7 @@ function renderDeed() {
         </div>
         <button id="csr-move-btn" style="width:100%;margin-top:14px;padding:10px;border:none;border-radius:12px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:12px;cursor:pointer">🚚 이사가기</button>
         <button id="csr-lore-btn" style="width:100%;margin-top:10px;padding:10px;border:1px dashed ${DEED.gold};border-radius:12px;background:#FBF6E8;color:#8a6d1a;font-weight:800;font-size:11px;cursor:pointer">📋 로어북용 복사</button>
+        <button id="csr-apply-world-labels-btn" style="width:100%;margin-top:10px;padding:10px;border:1px dashed ${DEED.ink};border-radius:12px;background:#fff;color:${DEED.ink};font-weight:800;font-size:11px;cursor:pointer">🌍 세계관에 맞게 탭2 이름 변경</button>
         ${appendixHtml}
         ${historyHtml}
     </div>`;
@@ -739,7 +763,7 @@ function renderItemsTab() {
     return `
     <div style="padding:14px">
         <div style="display:flex;gap:6px;flex-wrap:wrap;padding-bottom:10px">
-            ${SPACES.map((s) => `<div class="csr-space-chip" data-space="${s.key}" style="flex:none;display:inline-flex;align-items:center;gap:4px;line-height:1.4;padding:7px 12px;border-radius:999px;background:${s.key === state.currentSpace ? CUTE.lav : '#fff'};color:${CUTE.text};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap"><span style="font-size:13px">${s.emoji}</span><span>${s.label}</span></div>`).join('')}
+            ${SPACES.map((s) => { const d = getSpaceDisplay(s.key); return `<div class="csr-space-chip" data-space="${s.key}" style="flex:none;display:inline-flex;align-items:center;gap:4px;line-height:1.4;padding:7px 12px;border-radius:999px;background:${s.key === state.currentSpace ? CUTE.lav : '#fff'};color:${CUTE.text};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap"><span style="font-size:13px">${esc(d.emoji)}</span><span>${esc(d.label)}</span></div>`; }).join('')}
         </div>
         <div id="csr-tab2-body"></div>
     </div>`;
@@ -1040,6 +1064,12 @@ function bindDeedButtons() {
             if (copied) toastr.success('줄글로 정리해서 복사했어요!');
             // 실패 시 showManualCopyModal이 이미 안내 모달을 띄워줌
         } catch (e) { toastr.error(`처리 실패: ${e.message}`); }
+    });
+    document.getElementById('csr-apply-world-labels-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true; const origText = btn.textContent; btn.textContent = '🔄 변경 중...';
+        try { await applyWorldLabelsToSpaces(); } catch (err) { toastr.error(`처리 실패: ${err.message}`); }
+        btn.disabled = false; btn.textContent = origText;
     });
     document.querySelectorAll('.csr-history-item').forEach((el) => el.addEventListener('click', () => {
         showHistoryPopup(parseInt(el.dataset.idx));
