@@ -456,8 +456,6 @@ function toggleFoodPin(subtype, idx) {
 function toggleItemInjection(item) {
     if (!item.id) item.id = uid(); // 업데이트 이전에 생성된 아이템 대비 안전장치
     item.injected = !item.injected;
-    if (item.injected) setInjection(`csr_inj_item_${item.id}`, buildItemInjectionText(item));
-    else clearInjection(`csr_inj_item_${item.id}`);
     save();
     return item.injected;
 }
@@ -873,7 +871,6 @@ function createFloatingPanel() {
 function openFloat() {
     if (document.getElementById('csr-float')) return;
     pruneOrphanedData();
-    reapplyInjections();
     injectCSS();
     document.body.insertAdjacentHTML('beforeend', createFloatingPanel());
     const panel = document.getElementById('csr-float');
