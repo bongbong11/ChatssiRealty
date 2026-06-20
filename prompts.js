@@ -219,9 +219,12 @@ Task:
    - name
    - brand (brand / artisan / guild name — fitting the world)
    - price (local currency or the world's own currency unit)
-   - tmi (1–2 sentences of backstory for the 4-6 special items only; empty string for ordinary
-     items. For a secret persona-gift item, write it as a secret backstory like "hasn't given
-     it yet")
+   - tmi: for the 4-6 special items, 1-2 sentences of genuine backstory (for a secret
+     persona-gift item, phrase it as a secret like "hasn't given it yet"). For ALL OTHER
+     (ordinary) items, still write a short 1-sentence plain, factual description of the
+     item (what it is, what it's for/like) — never leave tmi as an empty string; every
+     item should have something worth reading when clicked, just at a different depth
+     (ordinary = brief factual description, special = genuine backstory/secret).
    - unlockCost (0 for ordinary items; 5–15 ONLY for the 4-6 special backstory items)
    - isSecretGift (true/false)
 4. Item flavor by world — **reflect BOTH category (broad classification) and subtype
@@ -271,10 +274,18 @@ Task:
      should get items that reflect BOTH: cyberpunk-flavored military implants or tactical gear.
    - Mixed settings (modern+fantasy, etc.) → real-world brands and world-specific items may coexist
 
-The food-storage space (kitchen's pantry/fridge) uses a separate prompt (buildFoodListPrompt)
-— it is not a target of this prompt.
+⚠ If spaceKey is "kitchen": this is the kitchen ROOM itself (appliances, cookware, utensils,
+a coffee/tea machine, leftover prepared/cooked food sitting out, dishware, small kitchen
+gadgets, etc.) — NOT raw groceries/ingredients. Raw pantry/fridge groceries are handled by a
+completely separate prompt (buildFoodListPrompt) and must never appear here.
 
 ${langInstructionStrong(lang)}
+
+⚠ FINAL CHECK before you output: look at every item you're about to write. If any of them
+is NOT something that genuinely belongs in "${spaceLabel}", either change it to something
+that does belong there, or — if you're intentionally keeping it as a rare out-of-place
+exception — make sure its tmi field actually states the mundane reason it ended up there.
+Do not output an out-of-place item with an empty or generic tmi.
 
 Output format: JSON only, no other text or code-block markers.
 { "empty": false, "items": [ { "emoji":"", "name":"", "brand":"", "price":"",
@@ -350,6 +361,12 @@ If the era/genre has no concept of a fridge (e.g. the Joseon era), do not genera
 Fields per item: { "emoji":"", "name":"", "qty":"", "tmi":"", "unlockCost": 0 or 5–15 }
 
 ${langInstructionStrong(lang)}
+
+⚠ FINAL CHECK before you output: look at every item you're about to write. If any of them
+is NOT an actual food/beverage/ingredient, either change it to one, or — if you're
+intentionally keeping it as a rare out-of-place exception — make sure its tmi field
+actually states the mundane reason it ended up there. Do not output an out-of-place item
+with an empty or generic tmi.
 
 Output format: JSON only, no other text or code-block markers.
 { "empty": false, "list": [ { "emoji":"", "name":"", "qty":"", "tmi":"", "unlockCost":0 }, ... ] }
