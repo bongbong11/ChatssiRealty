@@ -13,6 +13,7 @@ import {
     buildFoodListPrompt,
     buildLorebookExportPrompt,
     buildSpaceLabelsPrompt,
+    buildDiscoveryCheckPrompt,
     buildItemInjectionText,
     buildFoodBundleInjectionText,
 } from './prompts.js';
@@ -42,6 +43,7 @@ const SPACES = [
     { key: 'study',   label: '서재', emoji: '📚', food: false },
     { key: 'garage',  label: '차고', emoji: '🚗', food: false },
     { key: 'storage', label: '창고', emoji: '📦', food: false },
+    { key: 'secret',  label: '비밀수집', emoji: '🗃️', food: false, isCollection: true },
 ];
 
 const WORLD_CATS = ['자동감지', '현실', '판타지', '시대극', '메이저IP'];
@@ -67,8 +69,11 @@ const defaultSettings = {
     outputLanguage: 'ko', // 'ko' | 'en'
     rouletteLastSpinAt: 0,
     chatHistoryCount: 30, // buildManualContext에서 가져올 최근 채팅 메시지 개수
+    discoveryEnabled: false, // 🎁 발견 기능 — 매턴 토큰 나가니까 기본 OFF, 원하는 사람만 켜기
     perChar: {}, // { [charKey]: { house:{current,history}, spaces:{key:[..]}, pantry:[], fridge:[] } }
 };
+const DISCOVERY_QUEUE_CAP = 12;
+const DISCOVERY_READ_COUNT = 4; // 발견 판단에 읾을 최근 메시지 개수 (유저2+AI2)
 
 // ─── 상태 ──────────────────────────────────
 let state = {
@@ -97,6 +102,12 @@ function filterPhoneTrigger(t) {
     return (t || '').replace(/<phone_trigger[^>]*>[\s\S]*?<\/phone_trigger>/gi, '').trim();
 }
 function uid() { return Math.random().toString(36).slice(2, 10); }
+// 가끔 AI가 emoji 필드에 실제 이모지 대신 "헬멧"같은 텍스트 단어를 써버리는 경우의 안전장치 —
+// 한글/영문 글자가 섞여있으면 이모지가 아니라 텍스트로 판단하고 기본 이모지로 대체
+function safeEmoji(s) {
+    if (!s || /[가-힣a-zA-Z]/.test(s)) return '📦';
+    return s;
+}
 // 비동기 생성(AI 호출) 완료 후 DOM을 갱신할 때, 그 사이 유저가 탭을 옮겨서 해당 요소가
 // 이미 사라졌을 수 있음 — 그런 경우 조용히 무시 (데이터 자체는 이미 save()로 저장됐으니 안전,
 // 다음에 그 탭 다시 열면 최신 데이터로 보임).
@@ -160,15 +171,19 @@ function getCharData() {
     const s = getSettings();
     const key = getCharKey();
     if (!s.perChar[key]) {
-        s.perChar[key] = { house: { current: null, history: [] }, spaces: {}, pantry: null, fridge: null, updatedAt: Date.now() };
+        s.perChar[key] = { house: { current: null, history: [] }, spaces: {}, pantry: null, fridge: null, discovery: { queue: [] }, secretCollection: { list: [] }, updatedAt: Date.now() };
     }
-    s.perChar[key].updatedAt = Date.now(); // 캡 안전망에서 LRU 판단용
-    return s.perChar[key];
+    const d = s.perChar[key];
+    if (!d.discovery) d.discovery = { queue: [] }; // 기존 캐릭터 데이터 마이그레이션 안전망
+    if (!d.secretCollection) d.secretCollection = { list: [] };
+    d.updatedAt = Date.now(); // 캡 안전망에서 LRU 판단용
+    return d;
 }
 
 // ─── 데이터 정리: 고아 캐시 제거 + 캡 안전망 ───────
 const PERCHAR_CAP = 100;     // 캐릭터별 데이터 최대 보관 개수 (안전망)
 const HOUSE_HISTORY_CAP = 50; // 캐릭터당 거주 이력 최대 보관 개수 (안전망)
+const SECRET_COLLECTION_CAP = 100; // 비밀수집 누적 최대 보관 개수 (안전망)
 
 function pruneOrphanedData() {
     const s = getSettings();
@@ -210,6 +225,10 @@ function pruneOrphanedData() {
     for (const charData of Object.values(cache)) {
         if (Array.isArray(charData?.house?.history) && charData.house.history.length > HOUSE_HISTORY_CAP) {
             charData.house.history = charData.house.history.slice(0, HOUSE_HISTORY_CAP);
+            changed = true;
+        }
+        if (Array.isArray(charData?.secretCollection?.list) && charData.secretCollection.list.length > SECRET_COLLECTION_CAP) {
+            charData.secretCollection.list = charData.secretCollection.list.slice(0, SECRET_COLLECTION_CAP);
             changed = true;
         }
     }
@@ -429,7 +448,7 @@ async function applyWorldLabelsToSpaces() {
     const data = getCharData();
     const worldClass = data.house.current?._worldClass;
     if (!worldClass) { toastr.warning('먼저 집을 생성해주세요 (세계관 정보가 필요해요).'); return false; }
-    const currentLabels = Object.fromEntries(SPACES.map((s) => [s.key, { label: s.label, emoji: s.emoji }]));
+    const currentLabels = Object.fromEntries(SPACES.filter((s) => !s.isCollection).map((s) => [s.key, { label: s.label, emoji: s.emoji }]));
     currentLabels.pantry = { label: '팬트리', emoji: '🥫' };
     currentLabels.fridge = { label: '냉장고', emoji: '🧊' };
     const result = parseJSON(await callAI(buildSpaceLabelsPrompt(worldClass, currentLabels, lang)));
@@ -504,8 +523,12 @@ async function generateItemPool(spaceKey, isReroll = false) {
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
     const existing = data.spaces[spaceKey];
     const pinned = (isReroll && existing && !existing.empty) ? existing.items.filter((it) => it.pinned) : [];
-    // 중복 방지용 — 저장은 안 하고 이번 생성 호출에만 참고시킴
-    const existingNames = (existing && !existing.empty) ? existing.items.map((it) => it.name).filter(Boolean) : [];
+    // 중복 방지용 — 저장은 안 하고 이번 생성 호출에만 참고시킴. 이 공간 안의 아이템뿐 아니라
+    // 비밀수집/발견함 큐까지 포함해서 양방향 중복방지 (gatherAllItemNames가 전부 모아줌)
+    const existingNames = [...new Set([
+        ...((existing && !existing.empty) ? existing.items.map((it) => it.name).filter(Boolean) : []),
+        ...gatherAllItemNames(),
+    ])];
     const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })), existingNames };
 
     const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, displayLabel, lang, opts)));
@@ -514,10 +537,13 @@ async function generateItemPool(spaceKey, isReroll = false) {
     if (result.empty) {
         data.spaces[spaceKey] = { empty: true, emptyReason: result.emptyReason };
     } else {
-        const newItems = (result.items || []).map((it) => {
-            const unlockCost = it.unlockCost || 0;
-            return { ...it, id: uid(), unlockCost, unlocked: unlockCost === 0, pinned: false, injected: false, createdAt: Date.now() };
-        });
+        const pinnedNames = new Set(pinned.map((it) => it.name));
+        const newItems = (result.items || [])
+            .filter((it) => !pinnedNames.has(it.name)) // AI가 핀 아이템과 똑같은 이름으로 또 만들어버리는 경우 대비 안전망
+            .map((it) => {
+                const unlockCost = it.unlockCost || 0;
+                return { ...it, id: uid(), unlockCost, unlocked: unlockCost === 0, pinned: false, injected: false, createdAt: Date.now() };
+            });
         const finalItems = isReroll ? [...pinned, ...newItems].slice(0, ITEM_CAP) : newItems.slice(0, ITEM_CAP);
         data.spaces[spaceKey] = { empty: false, items: finalItems };
     }
@@ -545,7 +571,10 @@ async function generateFoodList(subtype, isReroll = false) {
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
     const existing = data[subtype];
     const pinned = (isReroll && existing && !existing.empty) ? existing.list.filter((it) => it.pinned) : [];
-    const existingNames = (existing && !existing.empty) ? existing.list.map((it) => it.name).filter(Boolean) : [];
+    const existingNames = [...new Set([
+        ...((existing && !existing.empty) ? existing.list.map((it) => it.name).filter(Boolean) : []),
+        ...gatherAllItemNames(),
+    ])];
     const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name })), existingNames };
 
     const result = parseJSON(await callAI(buildFoodListPrompt('', worldClass, subtype, lang, opts)));
@@ -591,6 +620,52 @@ function toggleFoodBundleInjection(subtype) {
     data[flagKey] = !data[flagKey];
     save();
     return data[flagKey];
+}
+
+// ─── 🎁 발견 기능 (역주입 — 채팅에서 정보를 읽어와 UI로 가져옴) ───────
+// 탭2 전체(방+펜트리/냉장고) + 비밀수집 + 현재 발견함 큐 — 중복 방지용 양방향 제외 목록
+function gatherAllItemNames() {
+    const data = getCharData();
+    const names = [];
+    for (const slot of Object.values(data.spaces || {})) {
+        if (slot?.empty) continue;
+        for (const it of slot?.items || []) if (it.name) names.push(it.name);
+    }
+    for (const subtype of ['pantry', 'fridge']) {
+        const slot = data[subtype];
+        if (slot && !slot.empty) for (const it of slot.list || []) if (it.name) names.push(it.name);
+    }
+    for (const it of data.secretCollection?.list || []) if (it.name) names.push(it.name);
+    for (const it of data.discovery?.queue || []) if (it.name) names.push(it.name);
+    return names;
+}
+async function checkForHiddenItemDiscovery() {
+    try {
+        const s = getSettings();
+        if (!s.discoveryEnabled) return;
+        const data = getCharData();
+        const ctx = SillyTavern.getContext();
+        const lastMsg = (ctx.chat || []).slice(-1)[0];
+        if (!lastMsg || lastMsg.is_user) return; // AI 메시지에만 반응 (유저 메시지 직후엔 체크 안 함)
+
+        const lang = s.outputLanguage || 'ko';
+        const worldClass = data.house.current?._worldClass || { category: 'REALISTIC', subtype: '', location_hint: '' };
+        const charName = ctx.characters?.[ctx.characterId]?.name || 'AI';
+        const recentText = (ctx.chat || []).slice(-DISCOVERY_READ_COUNT)
+            .map((m) => `${m.is_user ? (ctx.name1 || '유저') : charName}: ${m.mes}`).join('\n');
+        const excludeNames = gatherAllItemNames();
+
+        const result = parseJSON(await callAI(buildDiscoveryCheckPrompt(recentText, worldClass, excludeNames, lang)));
+        if (!result?.triggered) return;
+
+        const item = { id: uid(), emoji: result.emoji || '🎁', name: result.name || '', brand: result.brand || '', tmi: result.tmi || '', foundAt: Date.now() };
+        if (data.discovery.queue.length >= DISCOVERY_QUEUE_CAP) data.discovery.queue.shift(); // 12개 꽉 차면 가장 오래된 것부터 FIFO 제거
+        data.discovery.queue.push(item);
+        save();
+
+        toastr.info(`🎁 수집가가 ${charName}가 몰래 가지고 있는 물건정보를 빼왔어요!`);
+        if (state.isPanelOpen && state.currentTab === 'discovery') renderBody();
+    } catch (e) { console.warn(`[${MODULE_NAME}] 발견 체크 실패:`, e.message); }
 }
 
 // ─── 로딩 표시 (챗씨부인 방식 재사용) ───────
@@ -737,7 +812,7 @@ function renderItemGrid(spaceKey) {
             </div>`;
         }
         return `<div class="csr-item-slot" data-action="open" data-idx="${idx}" style="aspect-ratio:1;border-radius:14px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;cursor:pointer">
-            <div style="font-size:22px">${esc(it.emoji)}</div>
+            <div style="font-size:22px">${esc(safeEmoji(it.emoji))}</div>
             <div style="font-size:9px;color:${CUTE.text};font-weight:800;margin-top:3px;text-align:center;padding:0 4px">${esc(it.name)}</div>
             ${it.pinned ? `<div style="position:absolute;top:4px;right:4px;font-size:10px">📌</div>` : ''}
         </div>`;
@@ -756,7 +831,7 @@ function renderFoodList(subtype) {
         }
         const clickable = !!f.tmi;
         return `<div class="csr-food-row" ${clickable ? `data-action="open" data-idx="${idx}"` : ''} style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px dashed #f1d8e0;${clickable ? 'cursor:pointer' : ''}">
-            <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(f.emoji)} ${esc(f.name)} ${f.pinned ? '📌' : ''}</div>
+            <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(safeEmoji(f.emoji))} ${esc(f.name)} ${f.pinned ? '📌' : ''}</div>
             <div style="font-size:10px;color:#9b8aa0;font-weight:700">${esc(f.qty)}</div>
         </div>`;
     }).join('');
@@ -807,6 +882,23 @@ function renderTab2Body() {
             <button id="csr-food-bundle-inject-btn" style="flex:1;padding:8px;border-radius:12px;border:none;background:${bundleOn ? CUTE.yellow : CUTE.lav};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">${bundleOn ? '✅ 주입중' : '📡 목록 주입하기'}</button>
         </div>` : ''}`;
     }
+    if (state.currentSpace === 'secret') {
+        const list = getCharData().secretCollection.list;
+        const d = getSpaceDisplay('secret');
+        if (!list.length) {
+            return `<div style="text-align:center;color:${CUTE.text};opacity:.6;font-size:12px;padding:30px 10px">
+                ${esc(d.emoji)} 아직 비밀수집함이 비어있어요.<br>🎁 발견함에서 저장하면 여기 쌓여요.
+            </div>`;
+        }
+        return `<div style="max-height:50vh;overflow-y:auto;background:#fff;border-radius:14px;padding:4px 13px">
+            ${list.map((it, idx) => `
+                <div class="csr-secret-row" data-idx="${idx}" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px dashed #f1d8e0;cursor:pointer">
+                    <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(safeEmoji(it.emoji))} ${esc(it.name)}</div>
+                    ${it.brand ? `<div style="font-size:10px;color:#9b8aa0;font-weight:700">${esc(it.brand)}</div>` : ''}
+                </div>`).join('')}
+        </div>
+        <div style="margin-top:8px;font-size:10px;color:${CUTE.text};opacity:.6;text-align:center">${list.length}개 수집됨</div>`;
+    }
     // 주방 포함 모든 공간: 표준 12개 그리드. 주방일 때만 위에 팬트리/냉장고 보기 버튼 추가.
     const isKitchen = state.currentSpace === 'kitchen';
     const slot = getCharData().spaces[state.currentSpace];
@@ -827,8 +919,125 @@ function renderTab2Body() {
     ${slot ? `<button id="csr-room-reroll-btn" style="width:100%;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 다시 채우기 (핀 제외, 새로 채워지는 건 항상 잠금)</button>` : ''}`;
 }
 
+// ─── 🎁 발견함 탭 ────────────────────────────
+function renderDiscoveryTab() {
+    const queue = getCharData().discovery.queue;
+    if (!queue.length) {
+        return `<div style="text-align:center;color:${DEED.ink};opacity:.6;font-size:12px;padding:40px 10px">
+            아직 발견한 게 없어요.<br>롤플 중에 가끔, 아주 드물게 뭔가 나타날 수 있어요.
+        </div>`;
+    }
+    return `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px">
+        ${queue.map((it, idx) => `
+            <div class="csr-discovery-slot" data-idx="${idx}" style="aspect-ratio:1;border-radius:14px;background:#1a1a1a;display:flex;align-items:center;justify-content:center;position:relative;cursor:pointer;overflow:hidden">
+                <span style="font-size:26px;opacity:.5;filter:brightness(0)">🎁</span>
+                <span style="position:absolute;font-size:22px;font-weight:900;color:#fff">?</span>
+            </div>`).join('')}
+    </div>
+    <div style="margin-top:10px;font-size:10px;color:${DEED.ink};opacity:.5;text-align:center">${queue.length}/${DISCOVERY_QUEUE_CAP}개 미확인</div>`;
+}
+function bindDiscoveryTab() {
+    document.querySelectorAll('.csr-discovery-slot').forEach((el) => el.addEventListener('click', () => {
+        showDiscoveryRevealPopup(parseInt(el.dataset.idx));
+    }));
+}
+function showDiscoveryRevealPopup(idx) {
+    const item = getCharData().discovery.queue[idx];
+    if (!item) return;
+    document.getElementById('csr-discovery-popup')?.remove();
+    // 다른 모달들과 동일한 안전 패턴: flex 중앙정렬+inset:0 대신 고정 px 좌표로 배치
+    const mw = Math.min(280, window.innerWidth * 0.85);
+    const ml = Math.max(10, (window.innerWidth - mw) / 2);
+    const mt = Math.max(10, window.innerHeight * 0.18);
+
+    const modal = document.createElement('div');
+    modal.id = 'csr-discovery-popup';
+    modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;background:${DEED.bgCard};border-radius:18px;padding:22px 18px;text-align:center;font-family:system-ui;z-index:11000;box-shadow:0 8px 40px rgba(0,0,0,.5)`;
+    modal.innerHTML = `
+        <button id="csr-discovery-close" style="position:absolute;top:10px;right:12px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
+        <div id="csr-discovery-stage" style="height:100px;display:flex;align-items:center;justify-content:center;position:relative">
+            <div id="csr-discovery-box" style="font-size:48px;filter:brightness(0)">🎁</div>
+            <div id="csr-discovery-flash" style="position:absolute;width:10px;height:10px;border-radius:50%;background:#fff;opacity:0"></div>
+            <div id="csr-discovery-emoji" style="position:absolute;font-size:48px;opacity:0;transform:scale(0)">${esc(item.emoji)}</div>
+        </div>
+        <div id="csr-discovery-info" style="opacity:0;transform:translateY(8px);transition:opacity .4s,transform .4s">
+            <div style="font-weight:800;font-size:14px;color:${DEED.ink};margin-top:6px">${esc(item.name)}</div>
+            ${item.brand ? `<div style="font-size:11px;color:${DEED.gold};font-weight:700;margin-top:2px">${esc(item.brand)}</div>` : ''}
+            <div style="font-size:11px;color:#555;line-height:1.6;background:#FFF7E8;border-radius:10px;padding:10px;margin-top:10px;text-align:left">${esc(item.tmi)}</div>
+        </div>
+        <div id="csr-discovery-actions" style="opacity:0;display:flex;gap:8px;margin-top:12px;transition:opacity .4s">
+            <button id="csr-discovery-discard" style="flex:1;padding:9px;border:1px solid ${DEED.line};border-radius:12px;background:#fff;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">버리기</button>
+            <button id="csr-discovery-save" style="flex:1;padding:9px;border:none;border-radius:12px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:12px;cursor:pointer">저장할까요?</button>
+        </div>
+    `;
+    document.body.appendChild(modal);
+    document.getElementById('csr-discovery-close')?.addEventListener('click', () => modal.remove());
+
+    // ── 리빌 애니메이션 시퀀스: 흔들림 → 플래시 → 아이템 등장 → 정보/버튼 페이드인 ──
+    const box = document.getElementById('csr-discovery-box');
+    const flash = document.getElementById('csr-discovery-flash');
+    const emojiEl = document.getElementById('csr-discovery-emoji');
+    box.style.animation = 'csr-box-shake 0.6s ease-in-out';
+    setTimeout(() => {
+        box.style.transition = 'opacity .15s';
+        box.style.opacity = '0';
+        flash.style.transition = 'transform .5s ease-out, opacity .5s ease-out';
+        flash.style.opacity = '1';
+        flash.style.transform = 'scale(18)';
+        setTimeout(() => { flash.style.opacity = '0'; }, 350);
+        setTimeout(() => {
+            emojiEl.style.transition = 'opacity .3s, transform .3s cubic-bezier(.34,1.56,.64,1)';
+            emojiEl.style.opacity = '1';
+            emojiEl.style.transform = 'scale(1)';
+            document.getElementById('csr-discovery-info').style.opacity = '1';
+            document.getElementById('csr-discovery-info').style.transform = 'translateY(0)';
+        }, 300);
+        setTimeout(() => { document.getElementById('csr-discovery-actions').style.opacity = '1'; }, 600);
+    }, 600);
+
+    document.getElementById('csr-discovery-discard')?.addEventListener('click', () => {
+        const data = getCharData();
+        data.discovery.queue = data.discovery.queue.filter((it) => it.id !== item.id);
+        save();
+        modal.remove();
+        toastr.info('아쉽지만 그냥 흘려보냈어요.');
+        if (state.currentTab === 'discovery') renderBody();
+    });
+    document.getElementById('csr-discovery-save')?.addEventListener('click', () => {
+        const data = getCharData();
+        data.discovery.queue = data.discovery.queue.filter((it) => it.id !== item.id);
+        data.secretCollection.list.unshift({ id: item.id, emoji: item.emoji, name: item.name, brand: item.brand, tmi: item.tmi, foundAt: item.foundAt });
+        save();
+        modal.remove();
+        toastr.success('🗃️ 비밀수집함에 저장했어요!');
+        if (state.currentTab === 'discovery') renderBody();
+    });
+}
+
 // ─── 모달 ───────────────────────────────────
 // kind: 'room' | 'food'
+function showSecretItemPopup(idx) {
+    const item = getCharData().secretCollection.list[idx];
+    if (!item) return;
+    document.getElementById('csr-secret-popup')?.remove();
+    const mw = Math.min(280, window.innerWidth * 0.85);
+    const ml = Math.max(10, (window.innerWidth - mw) / 2);
+    const mt = Math.max(10, window.innerHeight * 0.18);
+    const modal = document.createElement('div');
+    modal.id = 'csr-secret-popup';
+    modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;background:#fff;border-radius:18px;padding:20px;font-family:system-ui;z-index:10500;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
+    modal.innerHTML = `
+        <button id="csr-secret-close-x" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:14px;color:${CUTE.text};opacity:.6">✕</button>
+        <div style="font-size:30px;text-align:center;margin-bottom:6px">${esc(safeEmoji(item.emoji))}</div>
+        <div style="font-weight:800;font-size:15px;color:${CUTE.text};text-align:center">${esc(item.name)}</div>
+        ${item.brand ? `<div style="font-weight:700;color:#9b8aa0;margin:4px 0 10px;font-size:12px;text-align:center">${esc(item.brand)}</div>` : ''}
+        <div style="font-size:11px;color:#555;line-height:1.55;background:#FFF7E8;border-radius:10px;padding:10px;margin-top:8px">${esc(item.tmi)}</div>
+        <button id="csr-secret-close" style="margin-top:12px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.text};color:#fff;font-weight:800;cursor:pointer;font-size:12px">닫기</button>
+    `;
+    document.body.appendChild(modal);
+    document.getElementById('csr-secret-close')?.addEventListener('click', () => modal.remove());
+    document.getElementById('csr-secret-close-x')?.addEventListener('click', () => modal.remove());
+}
 function showItemModal(kind, containerKey, idx) {
     const data = getCharData();
     const item = kind === 'room' ? data.spaces[containerKey].items[idx] : data[containerKey].list[idx];
@@ -845,7 +1054,7 @@ function showItemModal(kind, containerKey, idx) {
     modal.style.cssText = `position:fixed;top:${mt}px;left:${ml}px;width:${mw}px;background:#fff;border-radius:18px;padding:20px;font-family:system-ui;z-index:10500;box-shadow:0 8px 40px rgba(0,0,0,.4)`;
     modal.innerHTML = `
         <button id="csr-modal-close-x" style="position:absolute;top:10px;right:12px;background:none;border:none;cursor:pointer;font-size:14px;color:${CUTE.text};opacity:.6">✕</button>
-        <div style="font-weight:800;font-size:15px;color:${CUTE.text};padding-right:18px">${kind === 'room' ? esc(item.brand) : `${esc(item.emoji)} ${esc(item.name)}`}</div>
+        <div style="font-weight:800;font-size:15px;color:${CUTE.text};padding-right:18px">${kind === 'room' ? esc(item.brand) : `${esc(safeEmoji(item.emoji))} ${esc(item.name)}`}</div>
         ${kind === 'room' ? `<div style="font-weight:800;color:${DEED.stamp};margin:5px 0 10px;font-size:13px">${esc(item.price)}</div>` : `<div style="font-size:10px;color:#9b8aa0;margin:4px 0 10px">${esc(item.qty || '')}</div>`}
         <div style="font-size:11px;color:#555;line-height:1.55;background:#FFF7E8;border-radius:10px;padding:10px">${esc(item.tmi)}</div>
         <button id="csr-modal-pin" style="margin-top:9px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.yellow};font-weight:800;color:${CUTE.text};cursor:pointer;font-size:11px">${item.pinned ? '📌 고정 해제' : '📌 고정하기'}</button>
@@ -883,7 +1092,7 @@ function getActiveInjections() {
         const slot = data.spaces[spaceKey];
         if (slot?.empty) continue;
         for (const it of slot?.items || []) {
-            if (it.injected) list.push({ label: `${it.emoji || '📦'} ${it.name}`, kind: 'item', item: it });
+            if (it.injected) list.push({ label: `${safeEmoji(it.emoji)} ${it.name}`, kind: 'item', item: it });
         }
     }
     for (const subtype of ['pantry', 'fridge']) {
@@ -892,7 +1101,7 @@ function getActiveInjections() {
             list.push({ label: `${fd.emoji} ${fd.label} 목록 전체`, kind: 'bundle', subtype });
         }
         for (const it of data[subtype]?.list || []) {
-            if (it.injected) list.push({ label: `${it.emoji || '🍽️'} ${it.name}`, kind: 'item', item: it });
+            if (it.injected) list.push({ label: `${safeEmoji(it.emoji)} ${it.name}`, kind: 'item', item: it });
         }
     }
     return list;
@@ -1041,6 +1250,9 @@ function renderBody() {
         body.innerHTML = renderItemsTab();
         setInnerHTML('csr-tab2-body', renderTab2Body());
         bindItemsTab();
+    } else if (state.currentTab === 'discovery') {
+        body.innerHTML = `<div style="padding:14px">${renderDiscoveryTab()}</div>`;
+        bindDiscoveryTab();
     } else if (state.currentTab === 'settings') {
         body.innerHTML = `<div style="padding:14px">${renderSettingsTabInner()}</div>`;
         bindSettingsTabInner();
@@ -1119,6 +1331,7 @@ function bindTab2Body() {
     document.getElementById('csr-fridge-btn')?.addEventListener('click', () => openFoodSubview('fridge'));
     document.getElementById('csr-back-btn')?.addEventListener('click', () => { state.foodSubview = null; setInnerHTML('csr-tab2-body', renderTab2Body()); bindTab2Body(); });
     document.querySelectorAll('.csr-food-switch').forEach((btn) => btn.addEventListener('click', () => openFoodSubview(btn.dataset.sub)));
+    document.querySelectorAll('.csr-secret-row').forEach((el) => el.addEventListener('click', () => showSecretItemPopup(parseInt(el.dataset.idx))));
 
     document.querySelectorAll('.csr-food-row').forEach((el) => el.addEventListener('click', () => {
         const idx = parseInt(el.dataset.idx);
@@ -1205,7 +1418,8 @@ function injectCSS() {
     if (document.getElementById('csr-styles')) return;
     const s = document.createElement('style');
     s.id = 'csr-styles';
-    s.textContent = `@keyframes csr-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`;
+    s.textContent = `@keyframes csr-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes csr-box-shake{0%,100%{transform:rotate(0deg)}15%{transform:rotate(-8deg)}30%{transform:rotate(8deg)}45%{transform:rotate(-8deg)}60%{transform:rotate(8deg)}75%{transform:rotate(-4deg)}90%{transform:rotate(4deg)}}`;
     document.head.appendChild(s);
 }
 
@@ -1222,6 +1436,7 @@ function createFloatingPanel() {
         <div id="csr-tabs" style="display:flex;border-bottom:1px solid ${DEED.line};flex-shrink:0">
             <button class="csr-tab-btn" data-tab="house" style="flex:1;background:none;border:none;border-bottom:2px solid ${DEED.ink};padding:9px 0;cursor:pointer;color:${DEED.ink};font-size:12px;font-weight:800">🏠 거주지</button>
             <button class="csr-tab-btn" data-tab="items" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:9px 0;cursor:pointer;color:${DEED.ink};opacity:.5;font-size:12px;font-weight:800">🧳 소지품</button>
+            <button class="csr-tab-btn" data-tab="discovery" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:9px 0;cursor:pointer;color:${DEED.ink};opacity:.5;font-size:12px;font-weight:800">🎁 발견함</button>
             <button class="csr-tab-btn" data-tab="settings" style="flex:1;background:none;border:none;border-bottom:2px solid transparent;padding:9px 0;cursor:pointer;color:${DEED.ink};opacity:.5;font-size:12px;font-weight:800">⚙️ 설정</button>
         </div>
         <div id="csr-content" style="flex:1;overflow-y:auto"></div>
@@ -1289,6 +1504,13 @@ function renderSettingsTabInner() {
             <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">불러올 최근 채팅 개수 (연결 프로필 지정 시에만 적용)</div>
             <input id="csr-chat-count" type="number" min="5" max="200" step="5" value="${s.chatHistoryCount || 30}" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
         </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid ${DEED.line};border-radius:10px;padding:10px 12px">
+            <div>
+                <div style="font-size:12px;font-weight:800;color:${DEED.ink}">🎁 발견 기능</div>
+                <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-top:2px">롤플 중 아주 드물게 숨겨진 아이템 발견 — 매턴 짧은 AI 호출이 추가로 나가요</div>
+            </div>
+            <button id="csr-discovery-toggle" style="border:none;border-radius:999px;padding:6px 12px;font-weight:800;font-size:11px;cursor:pointer;background:${s.discoveryEnabled ? CUTE.yellow : '#eee'};color:${DEED.ink};flex-shrink:0">${s.discoveryEnabled ? 'ON' : 'OFF'}</button>
+        </div>
         <div>
             <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">출력 언어 / Output Language</div>
             <select id="csr-lang" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
@@ -1318,6 +1540,11 @@ function bindSettingsTabInner() {
     });
     document.getElementById('csr-chat-count')?.addEventListener('change', (e) => {
         const s = getSettings(); s.chatHistoryCount = parseInt(e.target.value) || 30; save();
+    });
+    document.getElementById('csr-discovery-toggle')?.addEventListener('click', () => {
+        const s = getSettings(); s.discoveryEnabled = !s.discoveryEnabled; save();
+        toastr.success(s.discoveryEnabled ? '발견 기능 켜짐' : '발견 기능 꺼짐');
+        renderBody();
     });
     document.getElementById('csr-lang')?.addEventListener('change', (e) => {
         const s = getSettings(); s.outputLanguage = e.target.value; save();
@@ -1381,4 +1608,5 @@ export async function onActivate() {
 jQuery(async () => {
     const context = SillyTavern.getContext();
     context.eventSource.on(event_types.APP_READY, async () => { await onActivate(); });
+    context.eventSource.on(event_types.MESSAGE_RECEIVED, () => { checkForHiddenItemDiscovery(); });
 });
