@@ -364,6 +364,39 @@ async function buildManualContext() {
         recentChat ? `[최근 대화]\n${recentChat}` : '',
     ].filter(Boolean).join('\n\n');
 }
+// 발견 기능처럼 "이미 자체적으로 필요한 맥락(최근 메시지 몇 개)을 프롬프트 안에 담고 있어서
+// 추가 컨텍스트가 필요 없는" 가벼운 호출용 — buildManualContext()도 안 거치고, 로어북/AN도
+// 스킵(skipWIAN:true)해서 매턴 도는 호출이 무거워지지 않게 함.
+async function callAILight(prompt) {
+    const ctx = SillyTavern.getContext();
+    const s = getSettings();
+    const profileName = s.selectedProfileName;
+
+    if (profileName && ctx.ConnectionManagerRequestService) {
+        const profiles = ctx.extensionSettings?.['connectionManager']?.profiles || [];
+        const profile = profiles.find((p) => p.name === profileName);
+        if (profile) {
+            const response = await ctx.ConnectionManagerRequestService.sendRequest(
+                profile.id, [{ role: 'user', content: prompt }], s.maxTokens || 4000,
+                { stream: false, extractData: true, includePreset: true, includeInstruct: false },
+            );
+            let raw = '';
+            if (typeof response === 'string') raw = response;
+            else if (typeof response?.content === 'string') raw = response.content;
+            else if (response?.choices?.[0]?.message?.content) raw = response.choices[0].message.content;
+            else if (response?.content?.[0]?.text) raw = response.content[0].text;
+            return filterPhoneTrigger(raw);
+        }
+    }
+
+    // 프로필 미선택 — 로어북/AN까지 전부 스킵, 순수 프롬프트만
+    const result = await ctx.generateQuietPrompt({
+        quietPrompt: prompt,
+        quietToLoud: true,
+        skipWIAN: true,
+    });
+    return filterPhoneTrigger(result || '');
+}
 async function callAI(prompt) {
     const ctx = SillyTavern.getContext();
     const s = getSettings();
@@ -657,7 +690,7 @@ async function checkForHiddenItemDiscovery(force = false) {
         const excludeNames = gatherAllItemNames();
         console.log(`[${MODULE_NAME}] 발견 체크 실행 — 최근 ${DISCOVERY_READ_COUNT}개 메시지 분석 중...`, { recentText, worldClass });
 
-        const result = parseJSON(await callAI(buildDiscoveryCheckPrompt(recentText, worldClass, excludeNames, lang)));
+        const result = parseJSON(await callAILight(buildDiscoveryCheckPrompt(recentText, worldClass, excludeNames, lang)));
         console.log(`[${MODULE_NAME}] 발견 체크 결과:`, result);
         if (!result?.triggered) { if (force) toastr.info('이번엔 트리거 안 됐어요 (정상 — 장면이 안 맞으면 그런 거예요)'); return; }
 
