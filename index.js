@@ -20,7 +20,7 @@ import {
 
 const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
-const BASE_POINTS = 500;
+const BASE_POINTS = 1000;
 const REFILL_INTERVAL_MS = 1 * 60 * 60 * 1000; // 1시간
 const REFILL_AMOUNT = 10;
 const ROULETTE_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1시간마다 한 번
