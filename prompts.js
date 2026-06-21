@@ -110,13 +110,27 @@ structure unchanged.
 If the character's wealth level is low, set hasGarage/hasYard etc. to false; if very
 wealthy, generate 1–2 extra entries in appendix (additional assets).
 
+⚠ Also assess and output a hidden "wealthTier" field — this is INTERNAL metadata, never
+shown to the user in any displayed card, used only by other parts of this system to keep
+later item-pricing consistent with this character's actual means. Give an honest assessment
+regardless of how modestly or vaguely the visible fields above are phrased.
+Allowed values: "low" | "middle" | "high" | "very_high".
+
+⚠ Also output a hidden "characterProfileSummary" field — a compact, keyword-dense summary
+(3-5 short lines) of {{char}}'s personality, occupation, notable traits, and the relationship
+dynamic with the persona, distilled from the character sheet/persona/lorebook/chat context
+you were given. This is INTERNAL metadata, never shown to the user — its only purpose is so
+that OTHER generation calls later on can reference this compact summary instead of re-reading
+the full character sheet every time. Keep it dense and information-rich, not prose.
+
 ${langInstructionStrong(lang)}
 
 Output format: JSON only, no other text or code-block markers.
 { "residenceType":"", "price":"", "buildingType":"", "rooms":0, "bathrooms":0,
   "structureStyle":"", "hasYard":true, "hasGarage":true, "location":"", "address":"",
   "moveInDate":"", "interiorStyle":"", "renovation":"", "story":"", "status":"",
-  "appendix": ["..."] }
+  "appendix": ["..."], "wealthTier": "low|middle|high|very_high",
+  "characterProfileSummary": "" }
 `.trim();
 }
 
@@ -135,7 +149,7 @@ Previous housing card (for reference only — do not copy it as-is): ${JSON.stri
 
 Task: Generate a new housing card based on the context above. Keep the same character's
 tone/consistency, but do not simply copy the old data. Output field structure is identical
-to buildAddressGeneratePrompt.
+to buildAddressGeneratePrompt (including the hidden "wealthTier" field).
 
 ${langInstructionStrong(lang)}
 
@@ -471,13 +485,15 @@ cold/perishable storage (both nested under the kitchen's food-storage function).
 `.trim();
 }
 
-export function buildDiscoveryCheckPrompt(lastExchangeText, worldClass, excludeNames, lang = 'ko') {
+export function buildDiscoveryCheckPrompt(lastExchangeText, worldClass, profileContext, wealthHint, excludeNames, lang = 'ko') {
   const excludeNote = (excludeNames && excludeNames.length)
     ? `\nItems that already exist anywhere (rooms, pantry/fridge, secret collection, or
 already-pending discoveries) — never generate something that duplicates these, including
 conceptually/semantically (not just exact name matches):
 ${JSON.stringify(excludeNames)}\n`
     : '';
+  const wealthNote = wealthHint ? `\n{{char}}'s established financial/housing context (for wealth-level consistency on any pricier item): ${wealthHint}\n` : '';
+  const profileNote = profileContext ? `\n${profileContext}\n` : '';
   return `
 Role: Hidden item discovery judge.
 ${INFO_BLOCK_GUARD}
@@ -485,7 +501,7 @@ ${BREAK_CHARACTER_GUARD}
 ${langInstruction(lang)}
 
 World classification result: ${JSON.stringify(worldClass)}
-${excludeNote}
+${profileNote}${wealthNote}${excludeNote}
 The most recent exchange in the roleplay (read-only context, do not narrate or continue it):
 """
 ${lastExchangeText}
@@ -508,7 +524,18 @@ checklist to cycle through:
   while the persona isn't looking (protection, a personal snack/drink they like), or a
   pre-planned gift tied to a relationship-positive moment or a period of physical separation
   (deployment, training, a work trip — whatever fits {{char}}'s occupation/situation):
-  jewelry, a small carving/sculpture, a decorative piece, a ring, etc.
+  jewelry, a small carving/sculpture, a decorative piece, a ring, etc. — but this MUST make
+  genuine sense given the ACTUAL narrative arc, not just the surface relationship label (read
+  the recent context/lorebook for this). A flat contradiction with no narrative grounding is
+  bad (e.g. "a secretly-kept unproposed engagement ring" when they're already happily,
+  genuinely engaged makes no sense). But a more layered story can absolutely justify exactly
+  this kind of item — e.g. if the relationship started as a contract/arranged marriage and has
+  since grown into real feelings, {{char}} secretly buying "a real ring" (replacing the
+  contractual one) to represent genuine commitment is a perfectly fitting, even moving,
+  discovery. The test is narrative justification, not the relationship's surface label. Also,
+  for any jewelry/significant-purchase item, keep its price/quality consistent with {{char}}'s
+  established wealth level (from their housing/financial context) — don't have a
+  modest-income character casually buy something far above their means without reason.
 - A calm, ordinary conversation: {{char}} quietly picked up on an offhand remark or want and
   later ordered/acquired that exact thing (e.g. online) without being asked
 - The morning after intimacy, while the persona is still asleep: an anticipatory caretaking
