@@ -1638,16 +1638,15 @@ function renderSettingsTabInner() {
             <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">불러올 최근 채팅 개수 (연결 프로필 지정 시에만 적용)</div>
             <input id="csr-chat-count" type="number" min="5" max="200" step="5" value="${s.chatHistoryCount || 30}" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid ${DEED.line};border-radius:10px;padding:10px 12px;position:relative">
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid ${DEED.line};border-radius:10px;padding:10px 12px">
             <div>
                 <div style="font-size:12px;font-weight:800;color:${DEED.ink}">🎁 발견 기능</div>
                 <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-top:2px">롤플 중 아주 드물게 숨겨진 아이템 발견 — 매턴 짧은 AI 호출이 추가로 나가요</div>
             </div>
             <button id="csr-discovery-toggle" style="border:none;border-radius:999px;padding:6px 12px;font-weight:800;font-size:11px;cursor:pointer;background:${s.discoveryEnabled ? CUTE.yellow : '#eee'};color:${DEED.ink};flex-shrink:0">${s.discoveryEnabled ? 'ON' : 'OFF'}</button>
-            <div id="csr-discovery-test-btn" style="position:absolute;bottom:3px;right:3px;width:9px;height:9px;cursor:pointer;opacity:.15"></div>
         </div>
         <div>
-            <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">출력 언어 / Output Language</div>
+            <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px;display:flex;align-items:center;gap:6px">출력 언어 / Output Language<span id="csr-discovery-test-btn" style="width:12px;height:12px;border-radius:50%;background:${DEED.bg};box-shadow:0 0 0 1px rgba(0,0,0,.12),inset 0 1px 2px rgba(0,0,0,.08);cursor:pointer;flex-shrink:0"></span></div>
             <select id="csr-lang" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
                 <option value="ko" ${s.outputLanguage === 'ko' ? 'selected' : ''}>한국어</option>
                 <option value="en" ${s.outputLanguage === 'en' ? 'selected' : ''}>English</option>
