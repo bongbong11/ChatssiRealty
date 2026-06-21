@@ -21,7 +21,7 @@ import {
 const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
 const BASE_POINTS = 500;
-const REFILL_INTERVAL_MS = 3 * 60 * 60 * 1000; // 3시간
+const REFILL_INTERVAL_MS = 1 * 60 * 60 * 1000; // 1시간
 const REFILL_AMOUNT = 10;
 const ROULETTE_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1시간마다 한 번
 // 보상이 클수록 당첨 확률(weight)은 낮아짐 — 합 100 기준 비중
@@ -47,6 +47,7 @@ const SPACES = [
 ];
 
 const WORLD_CATS = ['자동감지', '현실', '판타지', '시대극', '메이저IP'];
+const WORLD_CAT_MAP = { '현실': 'REALISTIC', '판타지': 'FANTASY', '시대극': 'HISTORICAL', '메이저IP': 'MAJOR_IP' };
 
 // ─── 컬러 토큰 ──────────────────────────────
 // 탭1(거주지) = Deed/문서 톤, 탭2(소지품) = 귀여운 인벤토리 톤
@@ -74,6 +75,7 @@ const defaultSettings = {
 };
 const DISCOVERY_QUEUE_CAP = 12;
 const DISCOVERY_READ_COUNT = 4; // 발견 판단에 읾을 최근 메시지 개수 (유저2+AI2)
+const DISCOVERY_COOLDOWN_TURNS = 2; // 트리거 직후 최소 안전장치 (이후엔 모델이 장면연장 여부를 직접 판단)
 
 // ─── 상태 ──────────────────────────────────
 let state = {
@@ -482,8 +484,9 @@ function parseJSON(raw) {
 // ─── 거주지 생성 / 이사가기 / 로어북 export ───
 async function classifyWorld(userHint) {
     const lang = getSettings().outputLanguage || 'ko';
-    const raw = await callAI(buildWorldClassifyPrompt('', userHint, lang));
-    return parseJSON(raw) || { category: 'REALISTIC', subtype: '', location_hint: '' };
+    const forcedCategory = WORLD_CAT_MAP[state.currentCategory] || null; // '자동감지'면 null(AI 자동판단)
+    const raw = await callAI(buildWorldClassifyPrompt('', userHint, lang, forcedCategory));
+    return parseJSON(raw) || { category: forcedCategory || 'REALISTIC', subtype: '', location_hint: '' };
 }
 async function generateHouse(userHint, isMove) {
     const lang = getSettings().outputLanguage || 'ko';
@@ -512,7 +515,7 @@ async function exportLorebook() {
     const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     if (!data.house.current) return null;
-    const { _worldClass, _generatedAt, _wealthTier, ...cardForExport } = data.house.current; // 메타정보는 줄글 변환 대상에서 제외
+    const { _worldClass, _wealthTier, ...cardForExport } = data.house.current; // 메타정보는 줄글 변환 대상에서 제외
     return await callAI(buildLorebookExportPrompt(cardForExport, lang));
 }
 
@@ -724,6 +727,16 @@ async function checkForHiddenItemDiscovery(force = false) {
         if (!lastMsg) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (채팅 없음)`); return; }
         if (!force && lastMsg.is_user) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (마지막이 유저 메시지)`); return; } // AI 메시지에만 반응
         if (!force && isOOCOnly(lastMsg.mes)) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (OOC 응답으로 판단됨)`); return; } // 롤플 진행이 아니라 OOC 대화면 스킵
+        // 짧은 하드 쿨다운 — 바로 직후 연속 트리거(과거 6턴 고정이었던 거 너무 임의적이라 줄임)만
+        // 막는 최소 안전장치. 그 이후는 모델한테 "최근에 뭘 발견했었는지" 알려주고 같은 장면
+        // 연장인지 직접 판단하게 시킴 (빈도 강제 아니라 판단 기반 — 원래 의도에 더 맞음).
+        if (!force && data.discovery.cooldownTurns > 0) {
+            data.discovery.cooldownTurns--;
+            data.discovery.turnsSinceLastTrigger = (data.discovery.turnsSinceLastTrigger || 0) + 1;
+            save();
+            console.log(`[${MODULE_NAME}] 발견 체크 스킵 (하드 쿨다운 중, 남은 턴: ${data.discovery.cooldownTurns})`);
+            return;
+        }
 
         const lang = s.outputLanguage || 'ko';
         const worldClass = data.house.current?._worldClass || { category: 'REALISTIC', subtype: '', location_hint: '' };
@@ -743,15 +756,24 @@ async function checkForHiddenItemDiscovery(force = false) {
             profileSummary ? `[캐릭터/페르소나 요약 (캐시됨)]\n${profileSummary}` : '',
             lorebookText ? `[로어북]\n${lorebookText}` : '',
         ].filter(Boolean).join('\n\n');
-        console.log(`[${MODULE_NAME}] 발견 체크 실행 — 최근 ${DISCOVERY_READ_COUNT}개 메시지 분석 중...`, { recentText, worldClass, wealthHint, profileContext });
+        // 최근 트리거 기록 — 모델이 "같은 장면 연장인지" 판단할 수 있게 같이 넘김
+        data.discovery.turnsSinceLastTrigger = (data.discovery.turnsSinceLastTrigger || 0) + 1;
+        const recentTriggerNote = data.discovery.lastTriggerSummary
+            ? `Recent trigger history: ${data.discovery.turnsSinceLastTrigger} AI turn(s) ago, you discovered: "${data.discovery.lastTriggerSummary}". Judge scene-continuation against this as instructed above.`
+            : '';
+        console.log(`[${MODULE_NAME}] 발견 체크 실행 — 최근 ${DISCOVERY_READ_COUNT}개 메시지 분석 중...`, { recentText, worldClass, wealthHint, profileContext, recentTriggerNote });
 
-        const result = parseJSON(await callAILight(buildDiscoveryCheckPrompt(recentText, worldClass, profileContext, wealthHint, excludeNames, lang)));
+        const result = parseJSON(await callAILight(buildDiscoveryCheckPrompt(recentText, worldClass, profileContext, wealthHint, excludeNames, recentTriggerNote, lang)));
         console.log(`[${MODULE_NAME}] 발견 체크 결과:`, result);
+        save(); // turnsSinceLastTrigger 증가분 저장
         if (!result?.triggered) { if (force) toastr.info('이번엔 트리거 안 됐어요 (정상 — 장면이 안 맞으면 그런 거예요)'); return; }
 
         const item = { id: uid(), emoji: result.emoji || '🎁', name: result.name || '', brand: result.brand || '', tmi: result.tmi || '', foundAt: Date.now() };
         if (data.discovery.queue.length >= DISCOVERY_QUEUE_CAP) data.discovery.queue.shift(); // 12개 꽉 차면 가장 오래된 것부터 FIFO 제거
         data.discovery.queue.push(item);
+        data.discovery.cooldownTurns = DISCOVERY_COOLDOWN_TURNS; // 트리거 직후 하드 쿨다운
+        data.discovery.turnsSinceLastTrigger = 0;
+        data.discovery.lastTriggerSummary = `${item.name} — ${(item.tmi || '').slice(0, 100)}`;
         save();
 
         toastr.info(`🎁 수집가가 ${charName}가 몰래 가지고 있는 물건정보를 빼왔어요!`);
@@ -983,9 +1005,10 @@ function renderTab2Body() {
         }
         return `<div style="max-height:50vh;overflow-y:auto;background:#fff;border-radius:14px;padding:4px 13px">
             ${list.map((it, idx) => `
-                <div class="csr-secret-row" data-idx="${idx}" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px dashed #f1d8e0;cursor:pointer">
-                    <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(safeEmoji(it.emoji))} ${esc(it.name)} ${it.injected ? '📡' : ''}</div>
-                    ${it.brand ? `<div style="font-size:10px;color:#9b8aa0;font-weight:700">${esc(it.brand)}</div>` : ''}
+                <div class="csr-secret-row" data-idx="${idx}" style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px dashed #f1d8e0;cursor:pointer">
+                    <div style="font-size:12px;color:${CUTE.text};font-weight:700;flex:1">${esc(safeEmoji(it.emoji))} ${esc(it.name)} ${it.injected ? '📡' : ''}</div>
+                    ${it.brand ? `<div style="font-size:10px;color:#9b8aa0;font-weight:700;flex-shrink:0">${esc(it.brand)}</div>` : ''}
+                    <button class="csr-secret-del" data-idx="${idx}" title="삭제" style="border:none;background:none;color:${CUTE.text};opacity:.4;cursor:pointer;font-size:12px;flex-shrink:0;padding:2px 4px">✕</button>
                 </div>`).join('')}
         </div>
         <div style="margin-top:8px;font-size:10px;color:${CUTE.text};opacity:.6;text-align:center">${list.length}개 수집됨</div>`;
@@ -1007,7 +1030,7 @@ function renderTab2Body() {
     ${kitchenNav}
     ${!slot ? `<button id="csr-load-space-btn" style="width:100%;padding:10px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer;margin-bottom:10px">불러오기</button>` : ''}
     <div id="csr-item-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:10px">${renderItemGrid(state.currentSpace)}</div>
-    ${slot ? `<button id="csr-room-reroll-btn" style="width:100%;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 다시 채우기 (핀 제외, 새로 채워지는 건 항상 잠금)</button>` : ''}`;
+    ${slot ? `<button id="csr-room-reroll-btn" style="width:100%;padding:9px;border-radius:12px;border:none;background:${CUTE.mint};font-weight:800;font-size:11px;color:${CUTE.text};cursor:pointer">🔄 다시 채우기 (핀 제외, 대부분 무잠금 + 일부만 잠금)</button>` : ''}`;
 }
 
 // ─── 🎁 발견함 탭 ────────────────────────────
@@ -1049,7 +1072,7 @@ function showDiscoveryRevealPopup(idx) {
         <div id="csr-discovery-stage" style="height:100px;display:flex;align-items:center;justify-content:center;position:relative">
             <div id="csr-discovery-box" style="font-size:48px;filter:brightness(0)">🎁</div>
             <div id="csr-discovery-flash" style="position:absolute;width:10px;height:10px;border-radius:50%;background:#fff;opacity:0"></div>
-            <div id="csr-discovery-emoji" style="position:absolute;font-size:48px;opacity:0;transform:scale(0)">${esc(item.emoji)}</div>
+            <div id="csr-discovery-emoji" style="position:absolute;font-size:48px;opacity:0;transform:scale(0)">${esc(safeEmoji(item.emoji))}</div>
         </div>
         <div id="csr-discovery-info" style="opacity:0;transform:translateY(8px);transition:opacity .4s,transform .4s">
             <div style="font-weight:800;font-size:14px;color:${DEED.ink};margin-top:6px">${esc(item.name)}</div>
@@ -1106,7 +1129,6 @@ function showDiscoveryRevealPopup(idx) {
 }
 
 // ─── 모달 ───────────────────────────────────
-// kind: 'room' | 'food'
 function showSecretItemPopup(idx) {
     const item = getCharData().secretCollection.list[idx];
     if (!item) return;
@@ -1136,6 +1158,7 @@ function showSecretItemPopup(idx) {
         modal.remove();
     });
 }
+// kind: 'room' | 'food'
 function showItemModal(kind, containerKey, idx) {
     const data = getCharData();
     const item = kind === 'room' ? data.spaces[containerKey].items[idx] : data[containerKey].list[idx];
@@ -1433,6 +1456,16 @@ function bindTab2Body() {
     document.getElementById('csr-back-btn')?.addEventListener('click', () => { state.foodSubview = null; setInnerHTML('csr-tab2-body', renderTab2Body()); bindTab2Body(); });
     document.querySelectorAll('.csr-food-switch').forEach((btn) => btn.addEventListener('click', () => openFoodSubview(btn.dataset.sub)));
     document.querySelectorAll('.csr-secret-row').forEach((el) => el.addEventListener('click', () => showSecretItemPopup(parseInt(el.dataset.idx))));
+    document.querySelectorAll('.csr-secret-del').forEach((el) => el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(el.dataset.idx);
+        getCharData().secretCollection.list.splice(idx, 1);
+        save();
+        setInnerHTML('csr-tab2-body', renderTab2Body());
+        bindTab2Body();
+        refreshHeaderInjectBadge();
+        toastr.success('삭제했어요');
+    }));
 
     document.querySelectorAll('.csr-food-row').forEach((el) => el.addEventListener('click', () => {
         const idx = parseInt(el.dataset.idx);
@@ -1605,14 +1638,14 @@ function renderSettingsTabInner() {
             <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">불러올 최근 채팅 개수 (연결 프로필 지정 시에만 적용)</div>
             <input id="csr-chat-count" type="number" min="5" max="200" step="5" value="${s.chatHistoryCount || 30}" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid ${DEED.line};border-radius:10px;padding:10px 12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;background:#fff;border:1px solid ${DEED.line};border-radius:10px;padding:10px 12px;position:relative">
             <div>
                 <div style="font-size:12px;font-weight:800;color:${DEED.ink}">🎁 발견 기능</div>
                 <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-top:2px">롤플 중 아주 드물게 숨겨진 아이템 발견 — 매턴 짧은 AI 호출이 추가로 나가요</div>
             </div>
             <button id="csr-discovery-toggle" style="border:none;border-radius:999px;padding:6px 12px;font-weight:800;font-size:11px;cursor:pointer;background:${s.discoveryEnabled ? CUTE.yellow : '#eee'};color:${DEED.ink};flex-shrink:0">${s.discoveryEnabled ? 'ON' : 'OFF'}</button>
+            <div id="csr-discovery-test-btn" style="position:absolute;bottom:3px;right:3px;width:9px;height:9px;cursor:pointer;opacity:.15"></div>
         </div>
-        <button id="csr-discovery-test-btn" style="width:100%;padding:8px;border:1px dashed ${DEED.line};border-radius:10px;background:#fff;color:${DEED.ink};font-weight:800;font-size:11px;cursor:pointer">🧪 지금 체크해보기 (테스트용 — 현재 마지막 채팅 기준, 콘솔에 결과 로그)</button>
         <div>
             <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">출력 언어 / Output Language</div>
             <select id="csr-lang" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
@@ -1622,7 +1655,7 @@ function renderSettingsTabInner() {
         </div>
         <div style="border-top:1px solid ${DEED.line};padding-top:10px">
             <div style="font-size:12px;color:${DEED.ink}">보유 포인트: <b>${own}P</b>${cr ? ` (+ 챗틀로얄 ${cr}P 동기화 가능)` : ''}</div>
-            <div style="font-size:10px;color:${DEED.ink};opacity:.7;margin-top:3px">⏰ 3시간마다 자동으로 10P씩 적립됩니다 (앱을 꺼두었어도 다음 접속 시 경과 시간만큼 한꺼번에 적립).</div>
+            <div style="font-size:10px;color:${DEED.ink};opacity:.7;margin-top:3px">⏰ 1시간마다 자동으로 10P씩 적립됩니다 (앱을 꺼두었어도 다음 접속 시 경과 시간만큼 한꺼번에 적립).</div>
             <button id="csr-sync-btn" style="width:100%;margin-top:8px;padding:9px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer">🔄 챗틀로얄 포인트 동기화</button>
         </div>
         <div style="border-top:1px solid ${DEED.line};padding-top:10px;display:flex;flex-direction:column;gap:6px">
@@ -1648,11 +1681,8 @@ function bindSettingsTabInner() {
         toastr.success(s.discoveryEnabled ? '발견 기능 켜짐' : '발견 기능 꺼짐');
         renderBody();
     });
-    document.getElementById('csr-discovery-test-btn')?.addEventListener('click', async (e) => {
-        const btn = e.currentTarget;
-        btn.disabled = true; const orig = btn.textContent; btn.textContent = '🔄 체크 중... (F12 콘솔 확인)';
-        try { await checkForHiddenItemDiscovery(true); } catch (err) { toastr.error(`테스트 실패: ${err.message}`); }
-        btn.disabled = false; btn.textContent = orig;
+    document.getElementById('csr-discovery-test-btn')?.addEventListener('click', async () => {
+        try { await checkForHiddenItemDiscovery(true); } catch (err) { console.warn(`[${MODULE_NAME}]`, err.message); }
         renderBody();
     });
     document.getElementById('csr-lang')?.addEventListener('change', (e) => {
