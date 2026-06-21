@@ -1,8 +1,10 @@
 // prompts.js — 그남의 집 (구 챗씨부동산)
-// index.js's callAI() uses ctx.generateQuietPrompt({quietPrompt, quietToLoud:true, skipWIAN:false}).
-// This means the character sheet / persona / lorebook / recent chat history are already
-// automatically blended into context before the quietPrompt (instruction) below is added —
-// we never paste the context in as raw text ourselves.
+// index.js's callAI()는 두 경로 중 하나를 씀:
+//  1) 연결 프로필 지정 시: buildManualContext()가 캐릭터/페르소나 요약(캐싱됨)+로어북+최근챗을
+//     직접 모아서 프롬프트 앞에 텍스트로 붙여 ConnectionManager로 전송.
+//  2) 프로필 미지정 시: ctx.generateQuietPrompt({skipWIAN:false})로 ST가 로어북/AN/챗을
+//     자동으로 컨텍스트에 섞어줌 — 이 경우엔 우리가 따로 텍스트를 붙이지 않음.
+// 아래 각 prompt 함수는 이 컨텍스트가 "이미 어떤 식으로든 포함된 뒤"에 덧붙는 지시문이라고 가정.
 
 export const INFO_BLOCK_GUARD = `
 ⚠ The current conversation context may contain a status block or info block injected by
@@ -31,7 +33,34 @@ function langInstructionStrong(lang) {
     : '⚠ 다시 한번 강조: 아래 JSON의 key(emoji, name, brand 등 영문 필드명)는 형식이니까 그대로 두고, 그 안에 채워넣는 실제 텍스트 값은 전부 한국어로 작성할 것. 영문 key를 보고 값까지 영어로 쓰지 않도록 출력 직전에 다시 확인할 것.';
 }
 
-export function buildWorldClassifyPrompt(_unused, userHint, lang = 'ko') {
+export function buildWorldClassifyPrompt(_unused, userHint, lang = 'ko', forcedCategory = null) {
+  const taskBlock = forcedCategory
+    ? `Task: The category is FIXED by explicit user selection — do not classify it yourself.
+  category = "${forcedCategory}" (always use this value as-is)
+Your only job is to determine "subtype" and "location_hint" that best fit this category,
+based on the character sheet/persona/lorebook/chat context and the user reference text below.
+${forcedCategory === 'FANTASY' ? `(FANTASY here covers not just traditional magic fantasy, but any original
+non-existing-IP genre setting — zombie apocalypse, cyberpunk, sci-fi/space, post-apocalyptic,
+dystopia, military fiction, etc.)` : ''}
+${forcedCategory === 'MAJOR_IP' ? `For MAJOR_IP cases that split into multiple sub-series (e.g. Call of Duty):
+  1st priority - if the character sheet/lorebook has a clue, use that
+  2nd priority - if the user's text names a specific sub-series, use that (allow partial
+                 matches — "blops"/"black ops"/"Call of Duty Black Ops" should all match)
+  3rd priority - if neither exists, use a default (Call of Duty → Modern Warfare reboot)` : ''}`
+    : `Task: Classify into exactly one of these 4 categories.
+  - REALISTIC: the real world, based on an actual country/city
+  - FANTASY: not just traditional magic fantasy, but **any original (non-existing-IP) genre
+    setting** — zombie apocalypse, cyberpunk, sci-fi/space, post-apocalyptic, dystopia,
+    military fiction, etc. Any original genre world that isn't realistic, historical, or a
+    major IP belongs here.
+  - HISTORICAL: a specific period setting (state the era/region concretely)
+  - MAJOR_IP: an existing well-known franchise's setting (infer and name the specific work)
+
+For MAJOR_IP cases that split into multiple sub-series (e.g. Call of Duty):
+  1st priority - if the character sheet/lorebook has a clue, use that
+  2nd priority - if the user's text names a specific sub-series, use that (allow partial
+                 matches — "blops"/"black ops"/"Call of Duty Black Ops" should all match)
+  3rd priority - if neither exists, use a default (Call of Duty → Modern Warfare reboot)`;
   return `
 Role: Character data analyst.
 ${INFO_BLOCK_GUARD}
@@ -41,14 +70,7 @@ ${langInstruction(lang)}
 Refer to the character sheet, persona, lorebook, and recent chat history of this conversation.
 User-provided reference text: "${userHint || "(none)"}"
 
-Task: Classify into exactly one of these 4 categories.
-  - REALISTIC: the real world, based on an actual country/city
-  - FANTASY: not just traditional magic fantasy, but **any original (non-existing-IP) genre
-    setting** — zombie apocalypse, cyberpunk, sci-fi/space, post-apocalyptic, dystopia,
-    military fiction, etc. Any original genre world that isn't realistic, historical, or a
-    major IP belongs here.
-  - HISTORICAL: a specific period setting (state the era/region concretely)
-  - MAJOR_IP: an existing well-known franchise's setting (infer and name the specific work)
+${taskBlock}
 
 ⚠ Do NOT write the subtype field as a vague label like "fantasy" — write a **specific
 genre/setting** (e.g. "zombie apocalypse", "cyberpunk dystopia", "near-future space sci-fi",
@@ -57,12 +79,6 @@ item-generation step to pick genre-appropriate objects.
 
 If the user provided reference text, prioritize it above all else. If the text is in
 "setting-location" form (e.g. "Harry Potter-London"), parse the setting and location separately.
-
-For MAJOR_IP cases that split into multiple sub-series (e.g. Call of Duty):
-  1st priority - if the character sheet/lorebook has a clue, use that
-  2nd priority - if the user's text names a specific sub-series, use that (allow partial
-                 matches — "blops"/"black ops"/"Call of Duty Black Ops" should all match)
-  3rd priority - if neither exists, use a default (Call of Duty → Modern Warfare reboot)
 
 ${langInstructionStrong(lang)}
 
@@ -377,8 +393,11 @@ usual; the client will replace it with "???" on screen whenever unlockCost > 0, 
 need to do anything special — just write the real name as normal.**
 Fill the tmi field for these special items with a 1–2 sentence backstory.
 For all other ordinary food items, set unlockCost to 0 and tmi to an empty string.
-If the era/genre has no concept of a fridge (e.g. the Joseon era), do not generate a
-"fridge" at all — return empty instead.
+If the era/genre has no literal modern "fridge" concept (e.g. the Joseon era), don't return
+empty — instead generate the closest functional equivalent's contents (e.g. a root
+cellar/cold storage's actual contents for "fridge" in that era), matching how space names
+get reinterpreted elsewhere in this system. Only return empty if there's truly no equivalent
+storage concept of any kind for this world/era.
 
 Fields per item: { "emoji":"", "name":"", "qty":"", "tmi":"", "unlockCost": 0 or 5–15 }
 
@@ -473,6 +492,10 @@ zombie apocalypse, "vehicle storage" becomes a fortified vehicle bay; in REALIST
 settings, just keep the original default label as-is).
 If the world classification is REALISTIC, just return the current default labels unchanged.
 
+⚠ emoji values must be exactly ONE actual unicode emoji character — NEVER a text word/label.
+If there's no perfect emoji for a category's new name, pick the closest generic one instead
+of writing text.
+
 ${langInstructionStrong(lang)}
 
 Output format: JSON only, no other text or code-block markers. Keys must stay exactly
@@ -487,7 +510,7 @@ cold/perishable storage (both nested under the kitchen's food-storage function).
 `.trim();
 }
 
-export function buildDiscoveryCheckPrompt(lastExchangeText, worldClass, profileContext, wealthHint, excludeNames, lang = 'ko') {
+export function buildDiscoveryCheckPrompt(lastExchangeText, worldClass, profileContext, wealthHint, excludeNames, recentTriggerNote, lang = 'ko') {
   const excludeNote = (excludeNames && excludeNames.length)
     ? `\nItems that already exist anywhere (rooms, pantry/fridge, secret collection, or
 already-pending discoveries) — never generate something that duplicates these, including
@@ -496,6 +519,7 @@ ${JSON.stringify(excludeNames)}\n`
     : '';
   const wealthNote = wealthHint ? `\n{{char}}'s established financial/housing context (for wealth-level consistency on any pricier item): ${wealthHint}\n` : '';
   const profileNote = profileContext ? `\n${profileContext}\n` : '';
+  const triggerHistoryNote = recentTriggerNote ? `\n${recentTriggerNote}\n` : '';
   return `
 Role: Hidden item discovery judge.
 ${INFO_BLOCK_GUARD}
@@ -503,7 +527,7 @@ ${BREAK_CHARACTER_GUARD}
 ${langInstruction(lang)}
 
 World classification result: ${JSON.stringify(worldClass)}
-${profileNote}${wealthNote}${excludeNote}
+${profileNote}${wealthNote}${excludeNote}${triggerHistoryNote}
 The most recent exchange in the roleplay (read-only context, do not narrate or continue it):
 """
 ${lastExchangeText}
@@ -517,35 +541,78 @@ This can be either something {{char}} did deliberately/calculatedly, OR somethin
 spontaneous/impulsive — both count. What matters is that it's a genuine, in-character action
 by {{char}}, not a random object appearing from nowhere.
 
-Illustrative (non-exhaustive) categories — generalize beyond these, don't treat this as a
-checklist to cycle through:
-- Everyday outings (a walk, a cafe visit): a small thoughtful gesture (quietly pre-ordering
-  her favorite dessert) or a spontaneous little creation (absent-mindedly folding a napkin
-  into a paper crane) — only if it fits {{char}}'s established personality
-- Errands/shopping together: opportunistically slipping something practical into the cart
-  while the persona isn't looking (protection, a personal snack/drink they like), or a
-  pre-planned gift tied to a relationship-positive moment or a period of physical separation
-  (deployment, training, a work trip — whatever fits {{char}}'s occupation/situation):
-  jewelry, a small carving/sculpture, a decorative piece, a ring, etc. — but this MUST make
-  genuine sense given the ACTUAL narrative arc, not just the surface relationship label (read
-  the recent context/lorebook for this). A flat contradiction with no narrative grounding is
-  bad (e.g. "a secretly-kept unproposed engagement ring" when they're already happily,
-  genuinely engaged makes no sense). But a more layered story can absolutely justify exactly
-  this kind of item — e.g. if the relationship started as a contract/arranged marriage and has
-  since grown into real feelings, {{char}} secretly buying "a real ring" (replacing the
-  contractual one) to represent genuine commitment is a perfectly fitting, even moving,
-  discovery. The test is narrative justification, not the relationship's surface label. Also,
-  for any jewelry/significant-purchase item, keep its price/quality consistent with {{char}}'s
-  established wealth level (from their housing/financial context) — don't have a
-  modest-income character casually buy something far above their means without reason.
-- A calm, ordinary conversation: {{char}} quietly picked up on an offhand remark or want and
-  later ordered/acquired that exact thing (e.g. online) without being asked
-- The morning after intimacy, while the persona is still asleep: an anticipatory caretaking
-  gesture (painkillers set aside in case she's sore, coffee already brewing) — valid
-  material, but this exact category is COMMON, so weigh it carefully against the rarity bar
-  below rather than triggering it every time intimacy happens
-- After an argument or conflict: NOT necessarily anything for the persona at all — could be
-  something {{char}} got for themselves out of anger, spite, or impulse, unrelated to making up
+⚠ Scene-continuation check (read this first): if a recent-trigger note is provided above,
+first judge whether the CURRENT moment is still part of the SAME ongoing scene/event as that
+earlier discovery (same activity, same setting, same conversation just continuing) — if so,
+do NOT trigger again, even if it would otherwise qualify; the earlier discovery already
+"used up" this scene. Only trigger again if the scene has genuinely moved on (a new activity,
+a new location, a time-skip, a different topic/event entirely).
+
+Illustrative (non-exhaustive) categories — these are GENRE-AGNOSTIC PATTERNS, not literal
+scenarios. Always reinterpret them through the actual world classification (category/subtype)
+— a "supply run" looks completely different in a contemporary slice-of-life world versus a
+military/war setting, a medieval fantasy market, a zombie-apocalypse scavenging trip, or a
+sci-fi resupply dock. Translate the underlying pattern, don't force the literal example:
+- A routine errand/resupply/market moment: contemporary → grocery store; military → resupply
+  run or PX/commissary; fantasy → town market or bazaar; apocalypse/horror → a scavenging run;
+  sci-fi → a station resupply dock; cyberpunk → a night market or back-alley vendor; historical
+  drama (Joseon, Victorian, etc.) → a period-appropriate marketplace or merchant visit;
+  school/campus → a convenience store or campus shop run; idol/celebrity → a manager picking
+  something up between schedules; mafia/noir → a errand that doubles as cover for something
+  else; MAJOR_IP settings → that franchise's own equivalent (Diagon Alley, a cantina, etc.).
+  Opportunistically slipping something practical into the haul while the persona isn't looking
+  (something personally useful, or something for them),
+  or a pre-planned gift tied to a relationship-positive moment OR a period of physical
+  separation (deployment, a quest/mission away from home, training, a work trip, being
+  stationed elsewhere, going off-world — whatever fits {{char}}'s actual occupation/setting):
+  jewelry, a small carving/sculpture, a decorative piece, a ring, a trophy/memento from a
+  mission, etc. — but this MUST make genuine sense given the ACTUAL narrative arc, not just
+  the surface relationship label (read the recent context/lorebook for this). A flat
+  contradiction with no narrative grounding is bad (e.g. "a secretly-kept unproposed
+  engagement ring" when they're already happily, genuinely engaged makes no sense). But a
+  more layered story can absolutely justify exactly this kind of item — e.g. if the
+  relationship started as a contract/arranged marriage and has since grown into real
+  feelings, {{char}} secretly buying "a real ring" (replacing the contractual one) to
+  represent genuine commitment is a perfectly fitting, even moving, discovery. The test is
+  narrative justification, not the relationship's surface label. Also, for any
+  jewelry/significant-acquisition item, keep its price/quality/rarity consistent with
+  {{char}}'s established wealth level and the world's own economy (from their
+  housing/financial context) — don't have a modest-means character casually acquire
+  something far above their reach without reason.
+- A calm, ordinary moment of conversation or downtime (regardless of genre — a quiet barracks
+  evening, a tavern night, a ship's mess hall, a living room, a dorm room, a backstage green
+  room, a safehouse): {{char}} quietly picked up on an offhand remark or want and later acted
+  on it (ordered online in a modern setting, commissioned a craftsman in a fantasy one,
+  requisitioned it through channels in a military one, had a connection source it in a
+  mafia/noir setting, etc.) without being asked
+- The aftermath of intimacy, while the persona is still asleep/resting: an anticipatory
+  caretaking gesture (painkillers set aside in case she's sore, a drink/meal already prepared
+  — whatever fits the setting) — valid material, but this exact category is COMMON, so weigh
+  it carefully against the rarity bar below rather than triggering it every time intimacy happens
+- The aftermath of a genre-appropriate high-tension event: an argument/conflict in any genre,
+  but also a battle/raid/mission gone wrong (military, fantasy), a narrow escape (horror,
+  apocalypse), a difficult negotiation (political/court drama, mafia/noir), a bad performance
+  or scandal (idol/celebrity), a brutal exam or rivalry blowup (school/campus), a near-miss
+  on a job (heist/crime), survived danger of any kind in a MAJOR_IP setting too. NOT
+  necessarily anything for the persona at all — could be something {{char}} got/kept for
+  themselves out of anger, spite, impulse, relief, or grim humor, unrelated to making up or
+  processing what happened
+- Travel or transit downtime: a car ride, a long flight or train journey, a march between
+  camps, a sea voyage, hyperspace transit — whatever fits the setting. The idle time, a
+  layover/rest stop, or a different environment passed through creates an opportunity to
+  notice, pick up, or quietly prepare something
+- An incidental moment during {{char}}'s own duty/work itself — not a dedicated trip anywhere,
+  just something that happens to come up while they're doing their normal job/role (a soldier
+  on patrol, a doctor between patients, a chef experimenting in the kitchen, a mage
+  restocking their workshop, a hacker mid-job) — they notice or acquire something as a
+  side-effect of what they were already doing
+- A milestone or celebratory occasion: a birthday, an anniversary, a promotion, a personal
+  achievement, a holiday specific to the world/culture — a natural, premeditated occasion for
+  {{char}} to have prepared something in advance (distinct from a generic "things are going
+  well" mood — this is a specific, nameable occasion)
+- Exploration or curiosity: {{char}} looking through an unfamiliar or half-forgotten space (a
+  new room, an attic, an old storage area, ruins, an abandoned building, a relative's old
+  belongings) and turning up something tucked away there
 
 ⚠ Full emotional range is valid — items don't have to be sweet or kind. Calculated-romantic,
 impulsive, petty/spiteful, self-indulgent, practical — all of these are fair game, as long as
