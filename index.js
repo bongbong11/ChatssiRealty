@@ -639,14 +639,15 @@ function gatherAllItemNames() {
     for (const it of data.discovery?.queue || []) if (it.name) names.push(it.name);
     return names;
 }
-async function checkForHiddenItemDiscovery() {
+async function checkForHiddenItemDiscovery(force = false) {
     try {
         const s = getSettings();
-        if (!s.discoveryEnabled) return;
+        if (!s.discoveryEnabled && !force) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (기능 꺼짐)`); return; }
         const data = getCharData();
         const ctx = SillyTavern.getContext();
         const lastMsg = (ctx.chat || []).slice(-1)[0];
-        if (!lastMsg || lastMsg.is_user) return; // AI 메시지에만 반응 (유저 메시지 직후엔 체크 안 함)
+        if (!lastMsg) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (채팅 없음)`); return; }
+        if (!force && lastMsg.is_user) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (마지막이 유저 메시지)`); return; } // AI 메시지에만 반응
 
         const lang = s.outputLanguage || 'ko';
         const worldClass = data.house.current?._worldClass || { category: 'REALISTIC', subtype: '', location_hint: '' };
@@ -654,9 +655,11 @@ async function checkForHiddenItemDiscovery() {
         const recentText = (ctx.chat || []).slice(-DISCOVERY_READ_COUNT)
             .map((m) => `${m.is_user ? (ctx.name1 || '유저') : charName}: ${m.mes}`).join('\n');
         const excludeNames = gatherAllItemNames();
+        console.log(`[${MODULE_NAME}] 발견 체크 실행 — 최근 ${DISCOVERY_READ_COUNT}개 메시지 분석 중...`, { recentText, worldClass });
 
         const result = parseJSON(await callAI(buildDiscoveryCheckPrompt(recentText, worldClass, excludeNames, lang)));
-        if (!result?.triggered) return;
+        console.log(`[${MODULE_NAME}] 발견 체크 결과:`, result);
+        if (!result?.triggered) { if (force) toastr.info('이번엔 트리거 안 됐어요 (정상 — 장면이 안 맞으면 그런 거예요)'); return; }
 
         const item = { id: uid(), emoji: result.emoji || '🎁', name: result.name || '', brand: result.brand || '', tmi: result.tmi || '', foundAt: Date.now() };
         if (data.discovery.queue.length >= DISCOVERY_QUEUE_CAP) data.discovery.queue.shift(); // 12개 꽉 차면 가장 오래된 것부터 FIFO 제거
@@ -1511,6 +1514,7 @@ function renderSettingsTabInner() {
             </div>
             <button id="csr-discovery-toggle" style="border:none;border-radius:999px;padding:6px 12px;font-weight:800;font-size:11px;cursor:pointer;background:${s.discoveryEnabled ? CUTE.yellow : '#eee'};color:${DEED.ink};flex-shrink:0">${s.discoveryEnabled ? 'ON' : 'OFF'}</button>
         </div>
+        <button id="csr-discovery-test-btn" style="width:100%;padding:8px;border:1px dashed ${DEED.line};border-radius:10px;background:#fff;color:${DEED.ink};font-weight:800;font-size:11px;cursor:pointer">🧪 지금 체크해보기 (테스트용 — 현재 마지막 채팅 기준, 콘솔에 결과 로그)</button>
         <div>
             <div style="font-size:11px;font-weight:800;color:${DEED.ink};margin-bottom:4px">출력 언어 / Output Language</div>
             <select id="csr-lang" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:8px 10px;font-size:12px;color:${DEED.ink};box-sizing:border-box">
@@ -1544,6 +1548,13 @@ function bindSettingsTabInner() {
     document.getElementById('csr-discovery-toggle')?.addEventListener('click', () => {
         const s = getSettings(); s.discoveryEnabled = !s.discoveryEnabled; save();
         toastr.success(s.discoveryEnabled ? '발견 기능 켜짐' : '발견 기능 꺼짐');
+        renderBody();
+    });
+    document.getElementById('csr-discovery-test-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true; const orig = btn.textContent; btn.textContent = '🔄 체크 중... (F12 콘솔 확인)';
+        try { await checkForHiddenItemDiscovery(true); } catch (err) { toastr.error(`테스트 실패: ${err.message}`); }
+        btn.disabled = false; btn.textContent = orig;
         renderBody();
     });
     document.getElementById('csr-lang')?.addEventListener('change', (e) => {
