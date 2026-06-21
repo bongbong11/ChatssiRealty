@@ -154,7 +154,10 @@ export function buildItemPoolPrompt(_unused, worldClass, spaceKey, spaceLabel, l
     ? `\n⚠ Reroll mode: never regenerate the pinned items listed below — keep them exactly as
 they are. Only generate as many new items as there are slots to replace, following the
 EXACT SAME style as a fresh first-time generation described below (mostly free, only 4-6
-special locked items) — do NOT lock every regenerated item.
+special locked items) — do NOT lock every regenerated item. This also means: do not
+generate any new item that duplicates a pinned item's concept either (e.g. don't pin a
+"toolbox" and then also generate "tool kit" as a new item) — pinned items count as
+already-existing for duplicate-avoidance purposes too.
 Pinned items (keep, excluded from the count): ${JSON.stringify(opts.pinnedItems || [])}
 So the number of new items to generate = 12 - ${(opts.pinnedItems || []).length}.\n`
     : '';
@@ -215,7 +218,10 @@ Task:
    - All other items are ordinary, everyday belongings — these must be free (unlockCost 0),
      just like normal inventory browsing. Don't make plain items locked for no reason.
 3. Fields for each item:
-   - emoji (one emoji)
+   - emoji: exactly ONE actual unicode emoji character — NEVER a text word/label. If there's
+     no perfect emoji for a specific item, pick the closest generic one instead of writing
+     text (e.g. for a helmet use 🪖, for tools use 🔧, for a car part use 🚗) — do not leave
+     this field as a word like "helmet"; it must always render as a single emoji glyph.
    - name
    - brand (brand / artisan / guild name — fitting the world)
    - price (local currency or the world's own currency unit)
@@ -462,6 +468,64 @@ cold/perishable storage (both nested under the kitchen's food-storage function).
   "study": {"label":"", "emoji":""}, "garage": {"label":"", "emoji":""},
   "storage": {"label":"", "emoji":""}, "pantry": {"label":"", "emoji":""},
   "fridge": {"label":"", "emoji":""} }
+`.trim();
+}
+
+export function buildDiscoveryCheckPrompt(lastExchangeText, worldClass, excludeNames, lang = 'ko') {
+  const excludeNote = (excludeNames && excludeNames.length)
+    ? `\nItems that already exist anywhere (rooms, pantry/fridge, secret collection, or
+already-pending discoveries) — never generate something that duplicates these, including
+conceptually/semantically (not just exact name matches):
+${JSON.stringify(excludeNames)}\n`
+    : '';
+  return `
+Role: Hidden item discovery judge.
+${INFO_BLOCK_GUARD}
+${BREAK_CHARACTER_GUARD}
+${langInstruction(lang)}
+
+World classification result: ${JSON.stringify(worldClass)}
+${excludeNote}
+The most recent exchange in the roleplay (read-only context, do not narrate or continue it):
+"""
+${lastExchangeText}
+"""
+
+Task: Your job is genuine discernment, not a frequency quota — judge whether THIS SPECIFIC
+moment plausibly supports a small item secretly entering {{char}}'s belongings just now,
+the way a mischievous "item collector" character might sneak a peek and slip something into
+{{char}}'s things without being noticed.
+- Plausible triggers: a shopping/errand/market scene, receiving a gift/package/mail, going
+  somewhere new or exploring, picking up or noticing something incidental, a time-skip or
+  transition ("the next day...") where something could have been acquired off-screen.
+- Do NOT trigger for: combat/danger scenes, serious conflict or arguments, emotionally heavy
+  or vulnerable conversations, intimate moments — introducing a random item here would feel
+  jarring and tonally wrong. When the scene doesn't clearly support it, return false; do not
+  force an item just to have something to generate.
+
+⚠ Quality bar: this item must feel genuinely WORTH discovering — not a generic or forgettable
+object. The object itself doesn't need to be exotic or expensive; an ordinary, cheap, or
+small item is completely fine. What makes it worth discovering is the "why" — the tmi must
+give it real charm, humor, surprise, or a small emotional hook. If you can't come up with a
+genuinely compelling reason, return triggered:false instead of generating something boring
+just to fill the slot.
+
+If triggered, generate ONE item that fits the world classification's brand/flavor
+conventions (same rules as other item generation: REALISTIC → real brands; FANTASY →
+invented brands fitting the aesthetic; HISTORICAL → invented period-appropriate names;
+MAJOR_IP → in-universe brand if one exists, otherwise invent one matching its tone):
+  - emoji: exactly one real unicode emoji character, never a text word
+  - name
+  - brand (or empty string if not applicable)
+  - tmi: 1-2 sentences, written as a fun/charming/surprising note from the "item collector"
+    about how and why this ended up with {{char}} without them noticing — this is the part
+    that must earn the discovery, not just describe the object
+
+${langInstructionStrong(lang)}
+
+Output format: JSON only, no other text or code-block markers.
+{ "triggered": false } OR
+{ "triggered": true, "emoji":"", "name":"", "brand":"", "tmi":"" }
 `.trim();
 }
 
