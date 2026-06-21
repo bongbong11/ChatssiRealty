@@ -347,30 +347,50 @@ function spinRoulette(bet) {
 }
 
 // ─── AI 호출 ────────────────────────────────
-// 프로필 선택 시: 직접 모은 컨텍스트(캐릭터시트/페르소나/최근 챗) + 프롬프트를 ConnectionManager로 전송
-// 프로필 미선택 시: generateQuietPrompt로 ST가 로어북/AN/챗을 자동으로 섞어서 생성 (현재 연결 사용)
-async function buildManualContext() {
+// 로어북(월드인포) — isDryRun=true로 호출해서 실제 생성 이벤트(WORLD_INFO_ACTIVATED 등)는
+// 안 발생시키고 텍스트만 가져옴. 현재 챗 내용 기준으로 키워드 매칭된 엔트리만 반영됨.
+// 챗히스토리는 매턴 바뀌니까 항상 새로 읽어야 함 — 캐싱 대상 아님.
+async function fetchLorebookText(maxLen = 8000) {
     const ctx = SillyTavern.getContext();
-    const char = ctx.characters?.[ctx.characterId];
-    const charDesc = [char?.description, char?.personality, char?.scenario].filter(Boolean).join('\n').slice(0, 8000);
-    const personaName = ctx.name1 || '';
-    const personaDesc = (ctx.powerUserSettings?.persona_description || '').slice(0, 4000);
-    const recentChat = (ctx.chat || []).slice(-(getSettings().chatHistoryCount || 30)).map((m) => `${m.is_user ? (personaName || '유저') : (char?.name || 'AI')}: ${m.mes}`).join('\n').slice(-12000);
-    // 로어북(월드인포) — isDryRun=true로 호출해서 실제 생성 이벤트(WORLD_INFO_ACTIVATED 등)는
-    // 안 발생시키고 텍스트만 가져옴. 현재 챗 내용 기준으로 키워드 매칭된 엔트리만 반영됨.
-    let worldInfo = '';
     try {
         // getWorldInfoPrompt가 내부적으로 messages[depth].trim()을 호출하므로, chat 객체 배열이
         // 아니라 .mes 텍스트만 뽑은 "문자열 배열"을 역순(최근 메시지가 depth 0)으로 넘겨야 함.
-        // (script.js의 실제 호출부: coreChat.map(x => x.mes).reverse() 패턴과 동일하게 맞춤)
         const chatForWI = (ctx.chat || []).map((m) => m?.mes || '').reverse();
         const wi = await ctx.getWorldInfoPrompt?.(chatForWI, 16384, true);
-        worldInfo = (wi?.worldInfoString || '').slice(0, 8000);
-        console.log(`[${MODULE_NAME}] 로어북 조회 결과 — 매칭된 텍스트 길이: ${worldInfo.length}자`, worldInfo ? `\n내용 미리보기:\n${worldInfo.slice(0, 300)}${worldInfo.length > 300 ? '...' : ''}` : '(매칭된 엔트리 없음 — 키워드가 현재 채팅에 안 걸렸거나 로어북이 비어있을 수 있음)');
-    } catch (e) { console.warn(`[${MODULE_NAME}] 로어북 읽기 실패:`, e.message); }
+        const text = (wi?.worldInfoString || '').slice(0, maxLen);
+        console.log(`[${MODULE_NAME}] 로어북 조회 결과 — 매칭된 텍스트 길이: ${text.length}자`);
+        return text;
+    } catch (e) { console.warn(`[${MODULE_NAME}] 로어북 읽기 실패:`, e.message); return ''; }
+}
+// 캐릭터시트/페르소나는 롤플 중 거의 안 바뀌므로, 집 생성할 때 한 번 압축 요약해서
+// data.characterProfileSummary로 캐싱해두고, 이후엔 그걸 재사용 (매번 풀로 다시 안 읽음).
+// 챗히스토리/로어북만 매턴 새로 읽으면 됨 (서사 따라 계속 쌓이니까).
+function getCachedProfileSummary() {
+    return getCharData().characterProfileSummary || '';
+}
+// 프로필 선택 시: 직접 모은 컨텍스트(캐시 요약/캐릭터시트+페르소나, 로어북, 최근 챗) + 프롬프트를
+// ConnectionManager로 전송. 프로필 미선택 시: generateQuietPrompt로 ST가 로어북/AN/챗을 자동으로
+// 섞어서 생성 (현재 연결 사용)
+async function buildManualContext() {
+    const ctx = SillyTavern.getContext();
+    const char = ctx.characters?.[ctx.characterId];
+    const personaName = ctx.name1 || '';
+    const cachedProfile = getCachedProfileSummary();
+    // 캐시된 압축 요약이 있으면 그걸 쓰고, 없으면(아직 집 생성 전 등) 풀로 직접 읽음 — 부트스트랩 안전망
+    const charBlock = cachedProfile
+        ? `[캐릭터/페르소나 요약 (캐시됨)]\n${cachedProfile}`
+        : (() => {
+            const charDesc = [char?.description, char?.personality, char?.scenario].filter(Boolean).join('\n').slice(0, 8000);
+            const personaDesc = (ctx.powerUserSettings?.persona_description || '').slice(0, 4000);
+            return [
+                charDesc ? `[캐릭터 시트]\n${charDesc}` : '',
+                personaDesc ? `[페르소나: ${personaName}]\n${personaDesc}` : '',
+            ].filter(Boolean).join('\n\n');
+        })();
+    const recentChat = (ctx.chat || []).slice(-(getSettings().chatHistoryCount || 30)).map((m) => `${m.is_user ? (personaName || '유저') : (char?.name || 'AI')}: ${m.mes}`).join('\n').slice(-12000);
+    const worldInfo = await fetchLorebookText(8000);
     return [
-        charDesc ? `[캐릭터 시트]\n${charDesc}` : '',
-        personaDesc ? `[페르소나: ${personaName}]\n${personaDesc}` : '',
+        charBlock,
         worldInfo ? `[로어북]\n${worldInfo}` : '',
         recentChat ? `[최근 대화]\n${recentChat}` : '',
     ].filter(Boolean).join('\n\n');
@@ -472,6 +492,12 @@ async function generateHouse(userHint, isMove) {
     const card = parseJSON(await callAI(prompt));
     if (!card) return null;
     card._worldClass = worldClass;
+    card._wealthTier = card.wealthTier || 'middle'; // 숨겨진 재산등급 — 어떤 카드 UI에도 안 보임
+    delete card.wealthTier; // 보이는 필드에서는 제거
+    if (card.characterProfileSummary) {
+        data.characterProfileSummary = card.characterProfileSummary; // 캐싱 — 다음부터 풀로 안 읽고 이거 재사용
+    }
+    delete card.characterProfileSummary; // 보이는 필드에서는 제거
     if (data.house.current) data.house.history.unshift(data.house.current);
     data.house.current = card;
     save();
@@ -481,7 +507,7 @@ async function exportLorebook() {
     const lang = getSettings().outputLanguage || 'ko';
     const data = getCharData();
     if (!data.house.current) return null;
-    const { _worldClass, _generatedAt, ...cardForExport } = data.house.current; // 메타정보는 줄글 변환 대상에서 제외
+    const { _worldClass, _generatedAt, _wealthTier, ...cardForExport } = data.house.current; // 메타정보는 줄글 변환 대상에서 제외
     return await callAI(buildLorebookExportPrompt(cardForExport, lang));
 }
 
@@ -700,9 +726,21 @@ async function checkForHiddenItemDiscovery(force = false) {
         const recentText = (ctx.chat || []).slice(-DISCOVERY_READ_COUNT)
             .map((m) => `${m.is_user ? (ctx.name1 || '유저') : charName}: ${m.mes}`).join('\n');
         const excludeNames = gatherAllItemNames();
-        console.log(`[${MODULE_NAME}] 발견 체크 실행 — 최근 ${DISCOVERY_READ_COUNT}개 메시지 분석 중...`, { recentText, worldClass });
+        // 탭1 집 생성 시 같이 뽑아둔 숨겨진 재산등급(_wealthTier) — 유저에게는 안 보이는 정보,
+        // 비싼 아이템 생성 시 일관성 체크용으로만 내부적으로 사용
+        const houseCard = data.house.current;
+        const wealthHint = houseCard?._wealthTier ? `wealthTier=${houseCard._wealthTier}` : '';
+        // 캐릭터/페르소나는 캐싱된 압축 요약 재사용(풀로 다시 안 읽음), 로어북은 서사 따라 계속
+        // 쌓이니까 매턴 새로 읽음 — chatHistoryCount 설정과 무관하게 이 체크 전용으로 가볍게
+        const profileSummary = getCachedProfileSummary();
+        const lorebookText = await fetchLorebookText(4000);
+        const profileContext = [
+            profileSummary ? `[캐릭터/페르소나 요약 (캐시됨)]\n${profileSummary}` : '',
+            lorebookText ? `[로어북]\n${lorebookText}` : '',
+        ].filter(Boolean).join('\n\n');
+        console.log(`[${MODULE_NAME}] 발견 체크 실행 — 최근 ${DISCOVERY_READ_COUNT}개 메시지 분석 중...`, { recentText, worldClass, wealthHint, profileContext });
 
-        const result = parseJSON(await callAILight(buildDiscoveryCheckPrompt(recentText, worldClass, excludeNames, lang)));
+        const result = parseJSON(await callAILight(buildDiscoveryCheckPrompt(recentText, worldClass, profileContext, wealthHint, excludeNames, lang)));
         console.log(`[${MODULE_NAME}] 발견 체크 결과:`, result);
         if (!result?.triggered) { if (force) toastr.info('이번엔 트리거 안 됐어요 (정상 — 장면이 안 맞으면 그런 거예요)'); return; }
 
