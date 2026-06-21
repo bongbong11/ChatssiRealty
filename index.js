@@ -101,6 +101,17 @@ function esc(s) {
 function filterPhoneTrigger(t) {
     return (t || '').replace(/<phone_trigger[^>]*>[\s\S]*?<\/phone_trigger>/gi, '').trim();
 }
+// (OOC: ...) 전체를 감싸거나, 메시지가 OOC: 로 시작하는 경우 등 — "롤플 서술이 아니라 순수
+// OOC 대화"로 판단되면 true. 본문 일부에 OOC가 섞여있는 정도는 정상 narrative로 취급.
+function isOOCOnly(text) {
+    const t = (text || '').trim();
+    if (!t) return true;
+    // 전체가 하나의 (OOC: ...) 괄호로만 이루어진 경우
+    if (/^\(\s*OOC[\s:][\s\S]*\)$/i.test(t)) return true;
+    // "OOC:" 로 시작해서 그게 메시지 대부분을 차지하는 경우 (narrative 거의 없음)
+    if (/^OOC[\s:]/i.test(t) && t.length < 300) return true;
+    return false;
+}
 function uid() { return Math.random().toString(36).slice(2, 10); }
 // 가끔 AI가 emoji 필드에 실제 이모지 대신 "헬멧"같은 텍스트 단어를 써버리는 경우의 안전장치 —
 // 한글/영문 글자가 섞여있으면 이모지가 아니라 텍스트로 판단하고 기본 이모지로 대체
@@ -681,6 +692,7 @@ async function checkForHiddenItemDiscovery(force = false) {
         const lastMsg = (ctx.chat || []).slice(-1)[0];
         if (!lastMsg) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (채팅 없음)`); return; }
         if (!force && lastMsg.is_user) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (마지막이 유저 메시지)`); return; } // AI 메시지에만 반응
+        if (!force && isOOCOnly(lastMsg.mes)) { console.log(`[${MODULE_NAME}] 발견 체크 스킵 (OOC 응답으로 판단됨)`); return; } // 롤플 진행이 아니라 OOC 대화면 스킵
 
         const lang = s.outputLanguage || 'ko';
         const worldClass = data.house.current?._worldClass || { category: 'REALISTIC', subtype: '', location_hint: '' };
