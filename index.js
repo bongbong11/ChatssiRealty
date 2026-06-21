@@ -151,6 +151,9 @@ function collectActiveInjectionText() {
             if (it.injected) parts.push(buildItemInjectionText(it));
         }
     }
+    for (const it of data.secretCollection?.list || []) {
+        if (it.injected) parts.push(buildItemInjectionText(it));
+    }
     return parts.join('\n\n');
 }
 // manifest.json의 "generate_interceptor": "csrGenerateInterceptor"가 이 이름으로 전역에서 찾음
@@ -486,16 +489,18 @@ async function generateHouse(userHint, isMove) {
     const lang = getSettings().outputLanguage || 'ko';
     const worldClass = await classifyWorld(userHint);
     const data = getCharData();
+    const hasCachedProfile = !!data.characterProfileSummary;
     const prompt = isMove
-        ? buildHouseMovePrompt('', worldClass, data.house.current, lang)
-        : buildAddressGeneratePrompt('', worldClass, userHint, lang);
+        ? buildHouseMovePrompt('', worldClass, data.house.current, lang, hasCachedProfile)
+        : buildAddressGeneratePrompt('', worldClass, userHint, lang, hasCachedProfile);
     const card = parseJSON(await callAI(prompt));
     if (!card) return null;
     card._worldClass = worldClass;
     card._wealthTier = card.wealthTier || 'middle'; // 숨겨진 재산등급 — 어떤 카드 UI에도 안 보임
     delete card.wealthTier; // 보이는 필드에서는 제거
-    if (card.characterProfileSummary) {
-        data.characterProfileSummary = card.characterProfileSummary; // 캐싱 — 다음부터 풀로 안 읽고 이거 재사용
+    if (card.characterProfileSummary && !data.characterProfileSummary) {
+        // 최초 1회만 캐싱 — 이미 있으면 덮어쓰지 않음 (압축본을 또 압축하면 정보가 점점 손실될 위험)
+        data.characterProfileSummary = card.characterProfileSummary;
     }
     delete card.characterProfileSummary; // 보이는 필드에서는 제거
     if (data.house.current) data.house.history.unshift(data.house.current);
@@ -979,7 +984,7 @@ function renderTab2Body() {
         return `<div style="max-height:50vh;overflow-y:auto;background:#fff;border-radius:14px;padding:4px 13px">
             ${list.map((it, idx) => `
                 <div class="csr-secret-row" data-idx="${idx}" style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px dashed #f1d8e0;cursor:pointer">
-                    <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(safeEmoji(it.emoji))} ${esc(it.name)}</div>
+                    <div style="font-size:12px;color:${CUTE.text};font-weight:700">${esc(safeEmoji(it.emoji))} ${esc(it.name)} ${it.injected ? '📡' : ''}</div>
                     ${it.brand ? `<div style="font-size:10px;color:#9b8aa0;font-weight:700">${esc(it.brand)}</div>` : ''}
                 </div>`).join('')}
         </div>
@@ -1092,7 +1097,7 @@ function showDiscoveryRevealPopup(idx) {
     document.getElementById('csr-discovery-save')?.addEventListener('click', () => {
         const data = getCharData();
         data.discovery.queue = data.discovery.queue.filter((it) => it.id !== item.id);
-        data.secretCollection.list.unshift({ id: item.id, emoji: item.emoji, name: item.name, brand: item.brand, tmi: item.tmi, foundAt: item.foundAt });
+        data.secretCollection.list.unshift({ id: item.id, emoji: item.emoji, name: item.name, brand: item.brand, tmi: item.tmi, foundAt: item.foundAt, injected: false });
         save();
         modal.remove();
         toastr.success('🗃️ 비밀수집함에 저장했어요!');
@@ -1118,11 +1123,18 @@ function showSecretItemPopup(idx) {
         <div style="font-weight:800;font-size:15px;color:${CUTE.text};text-align:center">${esc(item.name)}</div>
         ${item.brand ? `<div style="font-weight:700;color:#9b8aa0;margin:4px 0 10px;font-size:12px;text-align:center">${esc(item.brand)}</div>` : ''}
         <div style="font-size:11px;color:#555;line-height:1.55;background:#FFF7E8;border-radius:10px;padding:10px;margin-top:8px">${esc(item.tmi)}</div>
-        <button id="csr-secret-close" style="margin-top:12px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.text};color:#fff;font-weight:800;cursor:pointer;font-size:12px">닫기</button>
+        <button id="csr-secret-inject" style="margin-top:9px;width:100%;padding:9px;border:none;border-radius:12px;background:${item.injected ? CUTE.yellow : CUTE.lav};color:${CUTE.text};font-weight:800;cursor:pointer;font-size:11px">${item.injected ? '✅ 주입중 (눌러서 해제)' : '📡 주입하기'}</button>
+        <button id="csr-secret-close" style="margin-top:7px;width:100%;padding:9px;border:none;border-radius:12px;background:${CUTE.text};color:#fff;font-weight:800;cursor:pointer;font-size:12px">닫기</button>
     `;
     document.body.appendChild(modal);
     document.getElementById('csr-secret-close')?.addEventListener('click', () => modal.remove());
     document.getElementById('csr-secret-close-x')?.addEventListener('click', () => modal.remove());
+    document.getElementById('csr-secret-inject')?.addEventListener('click', () => {
+        const nowInjected = toggleItemInjection(item);
+        toastr.success(nowInjected ? '주입을 시작했어요 (다음 턴부터 반영)' : '주입을 해제했어요');
+        refreshHeaderInjectBadge();
+        modal.remove();
+    });
 }
 function showItemModal(kind, containerKey, idx) {
     const data = getCharData();
@@ -1189,6 +1201,9 @@ function getActiveInjections() {
         for (const it of data[subtype]?.list || []) {
             if (it.injected) list.push({ label: `${safeEmoji(it.emoji)} ${it.name}`, kind: 'item', item: it });
         }
+    }
+    for (const it of data.secretCollection?.list || []) {
+        if (it.injected) list.push({ label: `${safeEmoji(it.emoji)} ${it.name}`, kind: 'item', item: it });
     }
     return list;
 }
@@ -1660,12 +1675,21 @@ function bindSettingsTabInner() {
     });
     document.getElementById('csr-reset-btn')?.addEventListener('click', async () => {
         const { Popup, POPUP_RESULT } = SillyTavern.getContext();
-        const ok = await Popup.show.confirm('데이터 초기화', '모든 캐릭터의 거주지/소지품 데이터를 초기화합니다. 포인트와 설정(프로필/언어 등)은 그대로 유지됩니다. 되돌릴 수 없습니다. 진행할까요?');
+        const ok = await Popup.show.confirm('데이터 초기화', '모든 캐릭터의 거주지/소지품 데이터를 초기화합니다. 포인트와 설정(프로필/언어 등), 캐릭터 요약 캐시는 그대로 유지됩니다. 되돌릴 수 없습니다. 진행할까요?');
         if (ok === POPUP_RESULT.AFFIRMATIVE) {
             const s = getSettings();
+            // 캐시 요약만 따로 보존한 뒤 캐릭터별 데이터 전체 초기화 (게임 데이터만 날리고, 캐릭터
+            // 이해를 위한 메타정보인 캐시는 유지 — 다시 풀로 안 읽어도 되게)
+            const preservedSummaries = {};
+            for (const [key, charData] of Object.entries(s.perChar || {})) {
+                if (charData?.characterProfileSummary) preservedSummaries[key] = charData.characterProfileSummary;
+            }
             s.perChar = {};
+            for (const [key, summary] of Object.entries(preservedSummaries)) {
+                s.perChar[key] = { house: { current: null, history: [] }, spaces: {}, pantry: null, fridge: null, discovery: { queue: [] }, secretCollection: { list: [] }, characterProfileSummary: summary, updatedAt: Date.now() };
+            }
             save();
-            toastr.success('데이터 초기화 완료 (포인트는 유지됨)');
+            toastr.success('데이터 초기화 완료 (포인트·캐시는 유지됨)');
             renderBody();
         }
     });
