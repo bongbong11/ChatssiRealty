@@ -71,7 +71,17 @@ Output format: JSON only, no other text or code-block markers, pure JSON.
 `.trim();
 }
 
-export function buildAddressGeneratePrompt(_unused, worldClass, userHint, lang = 'ko') {
+export function buildAddressGeneratePrompt(_unused, worldClass, userHint, lang = 'ko', hasCachedProfile = false) {
+  const profileFieldNote = hasCachedProfile ? '' : `
+⚠ Also output a hidden "characterProfileSummary" field — a compact, keyword-dense summary
+(3-5 short lines) of {{char}}'s personality, occupation, notable traits, and the relationship
+dynamic with the persona, distilled from the character sheet/persona/lorebook/chat context
+you were given. This is INTERNAL metadata, never shown to the user — its only purpose is so
+that OTHER generation calls later on can reference this compact summary instead of re-reading
+the full character sheet every time. Keep it dense and information-rich, not prose.
+`;
+  const profileFieldSchema = hasCachedProfile ? '' : `,
+  "characterProfileSummary": ""`;
   return `
 Role: Real-estate info generator.
 ${INFO_BLOCK_GUARD}
@@ -115,26 +125,18 @@ shown to the user in any displayed card, used only by other parts of this system
 later item-pricing consistent with this character's actual means. Give an honest assessment
 regardless of how modestly or vaguely the visible fields above are phrased.
 Allowed values: "low" | "middle" | "high" | "very_high".
-
-⚠ Also output a hidden "characterProfileSummary" field — a compact, keyword-dense summary
-(3-5 short lines) of {{char}}'s personality, occupation, notable traits, and the relationship
-dynamic with the persona, distilled from the character sheet/persona/lorebook/chat context
-you were given. This is INTERNAL metadata, never shown to the user — its only purpose is so
-that OTHER generation calls later on can reference this compact summary instead of re-reading
-the full character sheet every time. Keep it dense and information-rich, not prose.
-
+${profileFieldNote}
 ${langInstructionStrong(lang)}
 
 Output format: JSON only, no other text or code-block markers.
 { "residenceType":"", "price":"", "buildingType":"", "rooms":0, "bathrooms":0,
   "structureStyle":"", "hasYard":true, "hasGarage":true, "location":"", "address":"",
   "moveInDate":"", "interiorStyle":"", "renovation":"", "story":"", "status":"",
-  "appendix": ["..."], "wealthTier": "low|middle|high|very_high",
-  "characterProfileSummary": "" }
+  "appendix": ["..."], "wealthTier": "low|middle|high|very_high"${profileFieldSchema} }
 `.trim();
 }
 
-export function buildHouseMovePrompt(_unused, worldClass, prevCard, lang = 'ko') {
+export function buildHouseMovePrompt(_unused, worldClass, prevCard, lang = 'ko', hasCachedProfile = false) {
   return `
 Role: Housing regenerator. (Only called when the "Move" button is clicked — no auto-detection.)
 ${INFO_BLOCK_GUARD}
@@ -149,7 +151,7 @@ Previous housing card (for reference only — do not copy it as-is): ${JSON.stri
 
 Task: Generate a new housing card based on the context above. Keep the same character's
 tone/consistency, but do not simply copy the old data. Output field structure is identical
-to buildAddressGeneratePrompt (including the hidden "wealthTier" field).
+to buildAddressGeneratePrompt (including the hidden "wealthTier" field${hasCachedProfile ? '' : ' and "characterProfileSummary" field'}).
 
 ${langInstructionStrong(lang)}
 
