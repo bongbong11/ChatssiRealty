@@ -492,16 +492,46 @@ ${lastExchangeText}
 """
 
 Task: Your job is genuine discernment, not a frequency quota — judge whether THIS SPECIFIC
-moment plausibly supports a small item secretly entering {{char}}'s belongings just now,
-the way a mischievous "item collector" character might sneak a peek and slip something into
-{{char}}'s things without being noticed.
-- Plausible triggers: a shopping/errand/market scene, receiving a gift/package/mail, going
-  somewhere new or exploring, picking up or noticing something incidental, a time-skip or
-  transition ("the next day...") where something could have been acquired off-screen.
-- Do NOT trigger for: combat/danger scenes, serious conflict or arguments, emotionally heavy
-  or vulnerable conversations, intimate moments — introducing a random item here would feel
-  jarring and tonally wrong. When the scene doesn't clearly support it, return false; do not
-  force an item just to have something to generate.
+moment plausibly supports {{char}} having quietly acquired, prepared, or kept a small item
+just now — the way a mischievous "item collector" character watches {{char}}'s actions and
+secretly notes down or slips out a hidden item.
+This can be either something {{char}} did deliberately/calculatedly, OR something purely
+spontaneous/impulsive — both count. What matters is that it's a genuine, in-character action
+by {{char}}, not a random object appearing from nowhere.
+
+Illustrative (non-exhaustive) categories — generalize beyond these, don't treat this as a
+checklist to cycle through:
+- Everyday outings (a walk, a cafe visit): a small thoughtful gesture (quietly pre-ordering
+  her favorite dessert) or a spontaneous little creation (absent-mindedly folding a napkin
+  into a paper crane) — only if it fits {{char}}'s established personality
+- Errands/shopping together: opportunistically slipping something practical into the cart
+  while the persona isn't looking (protection, a personal snack/drink they like), or a
+  pre-planned gift tied to a relationship-positive moment or a period of physical separation
+  (deployment, training, a work trip — whatever fits {{char}}'s occupation/situation):
+  jewelry, a small carving/sculpture, a decorative piece, a ring, etc.
+- A calm, ordinary conversation: {{char}} quietly picked up on an offhand remark or want and
+  later ordered/acquired that exact thing (e.g. online) without being asked
+- The morning after intimacy, while the persona is still asleep: an anticipatory caretaking
+  gesture (painkillers set aside in case she's sore, coffee already brewing) — valid
+  material, but this exact category is COMMON, so weigh it carefully against the rarity bar
+  below rather than triggering it every time intimacy happens
+- After an argument or conflict: NOT necessarily anything for the persona at all — could be
+  something {{char}} got for themselves out of anger, spite, or impulse, unrelated to making up
+
+⚠ Full emotional range is valid — items don't have to be sweet or kind. Calculated-romantic,
+impulsive, petty/spiteful, self-indulgent, practical — all of these are fair game, as long as
+the resulting action genuinely fits {{char}}'s actual personality (don't force a romantic
+gesture onto a character who wouldn't do that, and don't force pettiness onto someone who
+wouldn't either).
+
+- Do NOT trigger during active combat/danger or during an intimate act itself, or any moment
+  where introducing this would break tension or feel jarring mid-scene. Aftermath/transition
+  moments (the morning after, right after a fight ends, a time-skip) are fine windows even
+  when the triggering moment itself was tense.
+- Rarity calibration: even though several of the categories above (errands, mornings-after,
+  post-argument) can recur often in a roleplay, this should still feel like a genuinely rare,
+  special discovery overall — not something tied mechanically to "this scene type happened."
+  When in doubt, lean toward false.
 
 ⚠ Quality bar: this item must feel genuinely WORTH discovering — not a generic or forgettable
 object. The object itself doesn't need to be exotic or expensive; an ordinary, cheap, or
