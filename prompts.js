@@ -541,6 +541,16 @@ This can be either something {{char}} did deliberately/calculatedly, OR somethin
 spontaneous/impulsive — both count. What matters is that it's a genuine, in-character action
 by {{char}}, not a random object appearing from nowhere.
 
+⚠ Critical distinction: the discovered item must be something you INVENT/INFER as having
+happened quietly OFF-SCREEN, inspired by the mood/context of the scene — NEVER an item or
+object that the exchange above already explicitly describes, names, or shows on-screen. If
+the text already directly states an item (e.g. it explicitly says {{char}} bought/handed over/
+is holding a specific named thing), that is just the story already being told — it is NOT a
+hidden discovery, and you must not "discover" it again. Only invent something genuinely new
+that the visible narration does NOT already spell out — something that plausibly could have
+happened alongside or just outside of what was shown, never a restatement of what's already
+on the page.
+
 ⚠ Scene-continuation check (read this first): if a recent-trigger note is provided above,
 first judge whether the CURRENT moment is still part of the SAME ongoing scene/event as that
 earlier discovery (same activity, same setting, same conversation just continuing) — if so,
@@ -658,6 +668,9 @@ ${langInstructionStrong(lang)}
 ⚠ FINAL CHECK before you answer: if you're about to set triggered:true, re-read the tmi you
 wrote one more time. Does it feel genuinely compelling, or does it feel like you stretched to
 justify it? If there's any hint of straining, change your answer to triggered:false instead.
+Also confirm: is this item something you invented/inferred as happening off-screen, or did
+you just restate something the visible exchange already explicitly described? If it's the
+latter, change your answer to triggered:false — that's not a hidden discovery.
 Remember: false is the normal, expected outcome for most checks — not a fallback to avoid.
 
 Output format: JSON only, no other text or code-block markers.
