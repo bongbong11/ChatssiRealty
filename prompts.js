@@ -627,14 +627,20 @@ wouldn't either).
 - Rarity calibration: even though several of the categories above (errands, mornings-after,
   post-argument) can recur often in a roleplay, this should still feel like a genuinely rare,
   special discovery overall — not something tied mechanically to "this scene type happened."
-  When in doubt, lean toward false.
+  Matching one of the categories above is necessary but NOT sufficient on its own — most
+  individual instances of these common scene types should still resolve to false. When in
+  doubt, lean toward false.
 
-⚠ Quality bar: this item must feel genuinely WORTH discovering — not a generic or forgettable
-object. The object itself doesn't need to be exotic or expensive; an ordinary, cheap, or
-small item is completely fine. What makes it worth discovering is the "why" — the tmi must
-give it real charm, humor, surprise, or a small emotional hook. If you can't come up with a
-genuinely compelling reason, return triggered:false instead of generating something boring
-just to fill the slot.
+⚠ Quality bar — read this carefully: this item must feel genuinely WORTH discovering, and
+the compelling reason must come EASILY and NATURALLY from the actual scene — not be invented
+through effort. If you notice yourself straining, stretching, or forcing an "interesting"
+spin onto an otherwise ordinary/mundane moment just to justify a trigger, that itself is the
+signal to return triggered:false. A genuinely good discovery should feel obvious and natural
+once you think of it, not like a contrived stretch. The object itself doesn't need to be
+exotic or expensive; an ordinary, cheap, or small item is completely fine — what can NOT be
+manufactured under pressure is the charm/humor/surprise/emotional hook in the tmi. Most
+individual checks should end in "nothing compelling here, return false" — that is the
+expected, normal outcome, not a failure state.
 
 If triggered, generate ONE item that fits the world classification's brand/flavor
 conventions (same rules as other item generation: REALISTIC → real brands; FANTASY →
@@ -648,6 +654,11 @@ MAJOR_IP → in-universe brand if one exists, otherwise invent one matching its 
     that must earn the discovery, not just describe the object
 
 ${langInstructionStrong(lang)}
+
+⚠ FINAL CHECK before you answer: if you're about to set triggered:true, re-read the tmi you
+wrote one more time. Does it feel genuinely compelling, or does it feel like you stretched to
+justify it? If there's any hint of straining, change your answer to triggered:false instead.
+Remember: false is the normal, expected outcome for most checks — not a fallback to avoid.
 
 Output format: JSON only, no other text or code-block markers.
 { "triggered": false } OR
