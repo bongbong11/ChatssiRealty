@@ -607,7 +607,7 @@ async function generateItemPool(spaceKey, isReroll = false) {
         ...((existing && !existing.empty) ? existing.items.map((it) => it.name).filter(Boolean) : []),
         ...gatherAllItemNames(),
     ])];
-    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })), existingNames };
+    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })), existingNames, countryHint: data.house.current?.location || '' };
 
     const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, displayLabel, lang, opts)));
     if (!result) return null;
