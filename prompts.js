@@ -112,6 +112,18 @@ writing the output text in. A character who is American, British, etc. stays tha
 nationality regardless of whether you're asked to write the field values in Korean or
 English; never default to a Korean location just because the output language is Korean.
 
+⚠ Country-first anchoring: before filling in anything else, first decide and LOCK IN the
+country. Unless this is a genuinely original fantasy/virtual world with no Earth equivalent,
+this is almost always a real country — REALISTIC obviously, but also HISTORICAL (a real
+country's past) and most MAJOR_IP settings (Call of Duty, Harry Potter, etc. are still set
+on real-Earth countries even though the franchise is fictional). Only invent a fantasy
+country/region name if the setting is truly original/non-Earth. Once decided, this single
+country value is the source of truth for EVERY other field below — write the "location"
+field starting with that country name first (e.g. "미국 · 캘리포니아 LA 다운타운", "United
+Kingdom · London, Camden"), and make sure "price" uses that exact country's real currency
+and "address" follows that country's addressing convention. Do not let these fields drift
+to different countries from each other.
+
 World classification result: ${JSON.stringify(worldClass)}
 User reference text: "${userHint || "(none)"}"
 
@@ -119,15 +131,18 @@ Task: Generate the character's housing info in the fields below. Keep each field
 answer, not prose (the "story" field is the only exception).
   - residenceType (rent/own — reflect local convention; consider Korea's "jeonse" deposit
     system if relevant)
-  - price (in the local currency, within the real going rate for that area)
+  - price (in the local currency of the locked-in country above, within the real going rate
+    for that area — never a different country's currency)
   - buildingType
   - rooms, bathrooms
   - structureStyle (open-plan / separated, etc.)
   - hasYard
   - hasGarage
-  - location (a real place name, down to the neighborhood level)
-  - address (a specific street number/coordinate — pick any point within the neighborhood;
-    don't worry about whether it matches a real building exactly)
+  - location (MUST start with the locked-in country name, then narrow down to neighborhood
+    level — e.g. "미국 · 캘리포니아 LA 다운타운")
+  - address (a specific street number/coordinate within that same country/neighborhood — pick
+    any point within the neighborhood; don't worry about whether it matches a real building
+    exactly)
   - moveInDate
   - interiorStyle
   - renovation
@@ -148,6 +163,12 @@ regardless of how modestly or vaguely the visible fields above are phrased.
 Allowed values: "low" | "middle" | "high" | "very_high".
 ${profileFieldNote}
 ${langInstructionStrong(lang)}
+
+⚠ FINAL CHECK before you output: re-read "location", "price", and "address" together. Do
+they all point to the SAME country? Does "location" actually start with that country's name?
+Is "price" in that exact country's real currency (not a different country's, and not
+defaulted to Korean won just because you're writing in Korean)? Fix any mismatch before
+outputting.
 
 Output format: JSON only, no other text or code-block markers.
 { "residenceType":"", "price":"", "buildingType":"", "rooms":0, "bathrooms":0,
@@ -173,8 +194,16 @@ Previous housing card (for reference only — do not copy it as-is): ${JSON.stri
 Task: Generate a new housing card based on the context above. Keep the same character's
 tone/consistency, but do not simply copy the old data. Output field structure is identical
 to buildAddressGeneratePrompt (including the hidden "wealthTier" field${hasCachedProfile ? '' : ' and "characterProfileSummary" field'}).
+⚠ Same country-anchoring rule applies: lock in the country first (almost always a real one
+unless it's a genuinely original fantasy/virtual world), make "location" start with that
+country's name, and make "price"/"address" match that same country — never let them drift
+to different countries, and never default to Korea just because you're writing in Korean.
 
 ${langInstructionStrong(lang)}
+
+⚠ FINAL CHECK before you output: re-read "location", "price", and "address" together — do
+they all point to the same country, with price in that country's real currency? Fix any
+mismatch before outputting.
 
 Output format: JSON only (same structure), no other text or code-block markers.
 `.trim();
