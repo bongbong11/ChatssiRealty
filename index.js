@@ -952,13 +952,14 @@ function renderFoodList(subtype) {
 
 // ─── 렌더링: 탭 본문 ────────────────────────
 function renderHouseTab() {
+    const hasHouse = !!getCharData().house.current;
     return `
     <div style="padding:14px">
         <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
             ${WORLD_CATS.map((c) => `<div class="csr-cat-chip" data-cat="${esc(c)}" style="flex:none;padding:7px 12px;border-radius:999px;background:${c === state.currentCategory ? DEED.ink : '#fff'};color:${c === state.currentCategory ? DEED.bg : DEED.ink};border:1px solid ${DEED.line};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">${esc(c)}</div>`).join('')}
         </div>
         <input id="csr-ref-input" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:10px 12px;font-size:12px;color:${DEED.ink};margin-bottom:10px;box-sizing:border-box" placeholder="예: 뉴욕 맨하탄 · 조선 한성 · 해리포터-런던 · 비워두면 자동">
-        <button id="csr-generate-btn" style="width:100%;padding:12px;border:none;border-radius:12px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:13px;cursor:pointer;margin-bottom:16px">집 생성하기</button>
+        ${!hasHouse ? `<button id="csr-generate-btn" style="width:100%;padding:12px;border:none;border-radius:12px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:13px;cursor:pointer;margin-bottom:16px">집 생성하기</button>` : ''}
         <div id="csr-deed-container">${renderDeed()}</div>
     </div>`;
 }
@@ -1398,9 +1399,9 @@ function bindHouseTab() {
             const card = await generateHouse(hint, false);
             if (!card) toastr.error('생성에 실패했어요 (AI 응답을 JSON으로 해석하지 못함). 다시 시도하거나 콘솔(F12) 로그를 확인해보세요.');
         } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
-        setInnerHTML('csr-deed-container', renderDeed());
-        bindDeedButtons();
-        btn.disabled = false;
+        // 집이 새로 생겼으면 "집 생성하기" 버튼이 사라져야 하니 전체 탭을 다시 그림
+        setInnerHTML('csr-content', renderHouseTab());
+        bindHouseTab();
     });
     bindDeedButtons();
 }
