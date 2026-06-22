@@ -22,15 +22,15 @@ label (e.g. "NAME:") — start directly with the data.
 // lang: 'ko' | 'en' — structure (JSON keys etc.) stays as-is; only the text content changes language
 function langInstruction(lang) {
   return lang === 'en'
-    ? '⚠ Write all generated text content in English. Do not mix languages.'
-    : '⚠ 생성되는 모든 텍스트 내용은 한국어로 작성할 것. 언어를 섞지 말 것.';
+    ? '⚠ Write all generated text content in English. Do not mix languages. (This is about the LANGUAGE of the text only — it has nothing to do with the character\'s actual nationality, location, or setting, which must be based on the real context you were given, not assumed from this language instruction.)'
+    : '⚠ 생성되는 모든 텍스트 내용은 한국어로 작성할 것. 언어를 섞지 말 것. (이건 글자를 어떤 언어로 적을지에 대한 지시일 뿐, 캐릭터의 실제 국적·장소·설정과는 아무 상관 없음 — 국적/배경은 이 언어 지시와 무관하게 어디까지나 실제로 주어진 캐릭터 정보를 기준으로 판단할 것.)';
 }
 // Repeated right above the output format, since models sometimes default to English
 // when they see English JSON keys, even when asked to write Korean values.
 function langInstructionStrong(lang) {
   return lang === 'en'
-    ? '⚠ REMINDER: the JSON keys below (emoji, name, brand, etc.) stay as English field names, but every actual text VALUE you write into them must be in English too — this reminder exists because models sometimes default to the wrong language when keys are in English. Re-check your output language now.'
-    : '⚠ 다시 한번 강조: 아래 JSON의 key(emoji, name, brand 등 영문 필드명)는 형식이니까 그대로 두고, 그 안에 채워넣는 실제 텍스트 값은 전부 한국어로 작성할 것. 영문 key를 보고 값까지 영어로 쓰지 않도록 출력 직전에 다시 확인할 것.';
+    ? '⚠ REMINDER: the JSON keys below (emoji, name, brand, etc.) stay as English field names, but every actual text VALUE you write into them must be in English too — this reminder exists because models sometimes default to the wrong language when keys are in English. Re-check your output language now. (Again: this only governs what LANGUAGE the text is written in — never let it influence the character\'s actual nationality/setting/location, which comes only from the real context provided.)'
+    : '⚠ 다시 한번 강조: 아래 JSON의 key(emoji, name, brand 등 영문 필드명)는 형식이니까 그대로 두고, 그 안에 채워넣는 실제 텍스트 값은 전부 한국어로 작성할 것. 영문 key를 보고 값까지 영어로 쓰지 않도록 출력 직전에 다시 확인할 것. (다시 강조: 이건 텍스트를 "어떤 언어로 쓸지"에 대한 지시일 뿐이다 — 캐릭터의 실제 국적/배경/장소를 한국으로 바꾸라는 뜻이 절대 아니다. 국적/배경은 오직 실제로 주어진 캐릭터 정보를 근거로만 판단할 것.)';
 }
 
 export function buildWorldClassifyPrompt(_unused, userHint, lang = 'ko', forcedCategory = null) {
@@ -106,6 +106,11 @@ ${langInstruction(lang)}
 
 Refer to the character sheet, persona, lorebook, and recent chat history of this
 conversation to estimate the character's wealth level, occupation, and home country.
+⚠ The home country/location must be based ONLY on the character's actual established
+nationality/background from that context — it has nothing to do with what language you're
+writing the output text in. A character who is American, British, etc. stays that
+nationality regardless of whether you're asked to write the field values in Korean or
+English; never default to a Korean location just because the output language is Korean.
 
 World classification result: ${JSON.stringify(worldClass)}
 User reference text: "${userHint || "(none)"}"
