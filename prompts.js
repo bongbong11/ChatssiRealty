@@ -235,6 +235,19 @@ differently (e.g. if "electric guitar" already exists, don't add "an electric gu
 another way, or a near-synonymous variant of it). Every newly generated item must be a
 genuinely distinct object/concept, not a reworded duplicate.\n`
     : '';
+  const isRealWorldCurrency = worldClass?.category === 'REALISTIC' || worldClass?.category === 'HISTORICAL' || worldClass?.category === 'MAJOR_IP';
+  const countryNote = opts.countryHint
+    ? `\n⚠ This character's home country/region is already locked in: "${opts.countryHint}".
+${isRealWorldCurrency
+      ? `Every "price" value below MUST use that exact country's real currency, written as a
+SYMBOL ($, £, €, ¥, etc.) if one commonly exists, or its 3-letter ISO code (ILS, UAH, THB,
+etc.) if it doesn't — never spell the currency out as a word. Never default to Korean won
+just because you're writing the text in Korean; the currency is tied to the locked-in
+country, not to the output language.`
+      : `If this world has its own invented currency (gold coins, credits, etc.), use that
+world's own canonical unit name consistently — don't drift to a real-world currency or to
+Korean won.`}\n`
+    : '';
   return `
 Role: Belongings inventory generator.
 ${INFO_BLOCK_GUARD}
@@ -254,7 +267,7 @@ ended up there (got distracted and left it there, multitasking, a kid/pet moved 
 never include an out-of-place object with no explanation, and never use it just for shock
 value. The "surprise" for special items should still mostly come from a space-appropriate
 item's BACKSTORY rather than from the item itself being out of place.
-${rerollNote}${existingNote}
+${rerollNote}${existingNote}${countryNote}
 Task:
 1. First decide how this space exists (if at all) in the current world/era. If it doesn't
    exist or makes no sense, return only { "empty": true, "emptyReason": "..." } and stop.
@@ -290,7 +303,15 @@ Task:
      this field as a word like "helmet"; it must always render as a single emoji glyph.
    - name
    - brand (brand / artisan / guild name — fitting the world)
-   - price (local currency or the world's own currency unit)
+   - price: depends on the world.
+     · If this is a real-Earth country (REALISTIC/HISTORICAL/most MAJOR_IP): use that
+       country's real currency, written as a SYMBOL ($, £, €, ¥, etc.) if one commonly
+       exists, or its 3-letter ISO code (ILS, UAH, THB, etc.) if it doesn't — never spell
+       the currency out as a word, and never default to Korean won unless the locked-in
+       country is actually Korea.
+     · If this is a FANTASY/original or non-Earth setting with its own invented currency
+       (gold coins, credits, Galleons, etc.): just use that world's own canonical unit name
+       as a word — this is fine since it's a unique term, not at risk of defaulting to won.
    - tmi: for the 4-6 special items, 1-2 sentences of genuine backstory (for a secret
      persona-gift item, phrase it as a secret like "hasn't given it yet"). For ALL OTHER
      (ordinary) items, still write a short 1-sentence plain, factual description of the
@@ -357,7 +378,10 @@ ${langInstructionStrong(lang)}
 is NOT something that genuinely belongs in "${spaceLabel}", either change it to something
 that does belong there, or — if you're intentionally keeping it as a rare out-of-place
 exception — make sure its tmi field actually states the mundane reason it ended up there.
-Do not output an out-of-place item with an empty or generic tmi.
+Do not output an out-of-place item with an empty or generic tmi. Also check every "price" —
+for a real-world country, is it a currency symbol/code matching the locked-in country (not
+spelled-out Korean won defaulted from the output language)? For a fantasy/original world, is
+it consistently using that world's own currency unit?
 
 Output format: JSON only, no other text or code-block markers.
 { "empty": false, "items": [ { "emoji":"", "name":"", "brand":"", "price":"",
