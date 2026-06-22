@@ -1388,7 +1388,10 @@ function bindHouseTab() {
         state.currentCategory = el.dataset.cat;
         renderBody();
     }));
-    document.getElementById('csr-generate-btn')?.addEventListener('click', async () => {
+    document.getElementById('csr-generate-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        if (btn.disabled) return;
+        btn.disabled = true;
         const hint = document.getElementById('csr-ref-input')?.value || '';
         showLoading('csr-deed-container', '그남의 집이 알아보는 중...');
         try {
@@ -1397,6 +1400,7 @@ function bindHouseTab() {
         } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
         setInnerHTML('csr-deed-container', renderDeed());
         bindDeedButtons();
+        btn.disabled = false;
     });
     bindDeedButtons();
 }
@@ -1496,13 +1500,19 @@ function bindTab2Body() {
         refreshHeaderInjectBadge();
     });
 
-    document.getElementById('csr-load-space-btn')?.addEventListener('click', async () => {
+    document.getElementById('csr-load-space-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        if (btn.disabled) return; // 중복 클릭 방지 — 생성 중엔 또 안 눌리게
+        btn.disabled = true;
         setInnerHTML('csr-item-grid', `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">불러오는 중...</div>`);
         try { await generateItemPool(state.currentSpace, false); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
         setInnerHTML('csr-tab2-body', renderTab2Body());
         bindTab2Body();
     });
-    document.getElementById('csr-room-reroll-btn')?.addEventListener('click', async () => {
+    document.getElementById('csr-room-reroll-btn')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        if (btn.disabled) return;
+        btn.disabled = true;
         setInnerHTML('csr-item-grid', `<div style="grid-column:1/-1;text-align:center;padding:20px;color:${CUTE.text}">다시 채우는 중...</div>`);
         try { await generateItemPool(state.currentSpace, true); } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
         setInnerHTML('csr-tab2-body', renderTab2Body());
