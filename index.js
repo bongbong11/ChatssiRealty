@@ -76,6 +76,7 @@ const defaultSettings = {
 const DISCOVERY_QUEUE_CAP = 12;
 const DISCOVERY_READ_COUNT = 4; // 발견 판단에 읾을 최근 메시지 개수 (유저2+AI2)
 const DISCOVERY_COOLDOWN_TURNS = 2; // 트리거 직후 최소 안전장치 (이후엔 모델이 장면연장 여부를 직접 판단)
+const DISCOVERY_QUALITY_THRESHOLD = 6; // qualityScore가 이 이상이어야 실제로 발동 (10점 만점, 코드단 하드게이트)
 
 // ─── 상태 ──────────────────────────────────
 let state = {
@@ -767,6 +768,14 @@ async function checkForHiddenItemDiscovery(force = false) {
         console.log(`[${MODULE_NAME}] 발견 체크 결과:`, result);
         save(); // turnsSinceLastTrigger 증가분 저장
         if (!result?.triggered) { if (force) toastr.info('이번엔 트리거 안 됐어요 (정상 — 장면이 안 맞으면 그런 거예요)'); return; }
+        // 모델이 triggered:true를 줘도, qualityScore가 기준 미달이면 코드 단에서 강제로 무효화 —
+        // 프롬프트 글로만 자율규제 시키는 것보다 확실한 하드 게이트
+        const score = Number(result.qualityScore) || 0;
+        if (score < DISCOVERY_QUALITY_THRESHOLD) {
+            console.log(`[${MODULE_NAME}] 발견 거부 (품질점수 ${score} < 기준 ${DISCOVERY_QUALITY_THRESHOLD}):`, result.name);
+            if (force) toastr.info(`품질점수 미달로 거부됨 (${score}/10)`);
+            return;
+        }
 
         const item = { id: uid(), emoji: result.emoji || '🎁', name: result.name || '', brand: result.brand || '', tmi: result.tmi || '', foundAt: Date.now() };
         if (data.discovery.queue.length >= DISCOVERY_QUEUE_CAP) data.discovery.queue.shift(); // 12개 꽉 차면 가장 오래된 것부터 FIFO 제거
@@ -1669,7 +1678,7 @@ function renderSettingsTabInner() {
             <button id="csr-sync-btn" style="width:100%;margin-top:8px;padding:9px;border:none;border-radius:12px;background:${CUTE.lav};color:${CUTE.text};font-weight:800;font-size:12px;cursor:pointer">🔄 챗틀로얄 포인트 동기화</button>
         </div>
         <div style="border-top:1px solid ${DEED.line};padding-top:10px;display:flex;flex-direction:column;gap:6px">
-            <button id="csr-clear-history-btn" style="width:100%;padding:9px;border:1px solid ${DEED.line};border-radius:12px;background:#fff;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">🗑 거주 이력만 삭제</button>
+            <button id="csr-clear-history-btn" style="width:100%;padding:9px;border:1px solid ${DEED.line};border-radius:12px;background:#fff;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">🗑 거주지 전체 리셋 (다시 집 생성 가능)</button>
             <button id="csr-reset-btn" style="width:100%;padding:9px;border:1px solid ${DEED.line};border-radius:12px;background:#fff;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">🗑 데이터 초기화 (포인트는 보존)</button>
             <button id="csr-full-wipe-btn" style="width:100%;padding:9px;border:1px solid ${DEED.stamp};border-radius:12px;background:#fff;color:${DEED.stamp};font-weight:800;font-size:11px;cursor:pointer">⚠️ 완전 삭제 (포인트 포함 — 확장 제거 전용)</button>
         </div>
@@ -1705,11 +1714,12 @@ function bindSettingsTabInner() {
     });
     document.getElementById('csr-clear-history-btn')?.addEventListener('click', async () => {
         const { Popup, POPUP_RESULT } = SillyTavern.getContext();
-        const ok = await Popup.show.confirm('거주 이력 삭제', '현재 캐릭터의 거주 이력만 삭제합니다 (현재 집 정보/소지품/포인트는 그대로 유지). 진행할까요?');
+        const ok = await Popup.show.confirm('거주지 전체 리셋', '현재 집 정보와 거주 이력을 모두 삭제하고 "집 생성하기" 버튼을 다시 띄웁니다 (소지품/포인트는 그대로 유지). 진행할까요?');
         if (ok === POPUP_RESULT.AFFIRMATIVE) {
+            getCharData().house.current = null;
             getCharData().house.history = [];
             save();
-            toastr.success('거주 이력 삭제 완료');
+            toastr.success('거주지 리셋 완료');
             renderBody();
         }
     });
