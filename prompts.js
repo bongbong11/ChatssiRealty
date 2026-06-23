@@ -731,9 +731,14 @@ you just restate something the visible exchange already explicitly described? If
 latter, change your answer to triggered:false — that's not a hidden discovery.
 Remember: false is the normal, expected outcome for most checks — not a fallback to avoid.
 
+Also give a "qualityScore" from 0-10 rating how genuinely compelling/charming/surprising the
+tmi is (10 = something you'd be delighted to stumble onto, 0 = bland filler). Be a harsh
+grader — a merely "fine" or "acceptable" idea should score around 4-5, not 8+. Reserve
+8-10 only for something that would genuinely make someone smile or gasp a little.
+
 Output format: JSON only, no other text or code-block markers.
 { "triggered": false } OR
-{ "triggered": true, "emoji":"", "name":"", "brand":"", "tmi":"" }
+{ "triggered": true, "emoji":"", "name":"", "brand":"", "tmi":"", "qualityScore": 0 }
 `.trim();
 }
 
