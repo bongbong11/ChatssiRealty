@@ -1760,6 +1760,12 @@ export async function onActivate() {
     console.log(`[${MODULE_NAME}] 활성화`);
     checkRefill();
     pruneOrphanedData();
+    // 발견 기능은 서버 재시작/페이지 새로고침마다 항상 OFF로 리셋 — 매턴 추가 AI 호출이 나가는
+    // 기능이라 켜놓은 걸 깜빡하고 다니면 느려지는 걸 방지. 켜고 싶으면 그 세션에서 다시 켜야 함.
+    {
+        const s = getSettings();
+        if (s.discoveryEnabled) { s.discoveryEnabled = false; save(); }
+    }
 
     if (!document.getElementById('csr-wand-btn')) {
         const html = `<div id="csr-wand-btn" title="그남의 집" style="cursor:pointer;padding:4px 8px;display:flex;align-items:center;gap:5px;font-size:13px">
