@@ -76,7 +76,7 @@ const defaultSettings = {
 const DISCOVERY_QUEUE_CAP = 12;
 const DISCOVERY_READ_COUNT = 4; // 발견 판단에 읾을 최근 메시지 개수 (유저2+AI2)
 const DISCOVERY_COOLDOWN_TURNS = 2; // 트리거 직후 최소 안전장치 (이후엔 모델이 장면연장 여부를 직접 판단)
-const DISCOVERY_QUALITY_THRESHOLD = 6; // qualityScore가 이 이상이어야 실제로 발동 (10점 만점, 코드단 하드게이트)
+const DISCOVERY_QUALITY_THRESHOLD = 7; // qualityScore가 이 이상이어야 실제로 발동 (10점 만점, 코드단 하드게이트)
 
 // ─── 상태 ──────────────────────────────────
 let state = {
@@ -764,7 +764,7 @@ async function checkForHiddenItemDiscovery(force = false) {
             : '';
         console.log(`[${MODULE_NAME}] 발견 체크 실행 — 최근 ${DISCOVERY_READ_COUNT}개 메시지 분석 중...`, { recentText, worldClass, wealthHint, profileContext, recentTriggerNote });
 
-        const result = parseJSON(await callAILight(buildDiscoveryCheckPrompt(recentText, worldClass, profileContext, wealthHint, excludeNames, recentTriggerNote, lang)));
+        const result = parseJSON(await callAILight(buildDiscoveryCheckPrompt(recentText, worldClass, profileContext, wealthHint, houseCard?.location || '', excludeNames, recentTriggerNote, lang)));
         console.log(`[${MODULE_NAME}] 발견 체크 결과:`, result);
         save(); // turnsSinceLastTrigger 증가분 저장
         if (!result?.triggered) { if (force) toastr.info('이번엔 트리거 안 됐어요 (정상 — 장면이 안 맞으면 그런 거예요)'); return; }
