@@ -568,7 +568,7 @@ cold/perishable storage (both nested under the kitchen's food-storage function).
 `.trim();
 }
 
-export function buildDiscoveryCheckPrompt(lastExchangeText, worldClass, profileContext, wealthHint, excludeNames, recentTriggerNote, lang = 'ko') {
+export function buildDiscoveryCheckPrompt(lastExchangeText, worldClass, profileContext, wealthHint, countryHint, excludeNames, recentTriggerNote, lang = 'ko') {
   const excludeNote = (excludeNames && excludeNames.length)
     ? `\nItems that already exist anywhere (rooms, pantry/fridge, secret collection, or
 already-pending discoveries) — never generate something that duplicates these, including
@@ -576,6 +576,19 @@ conceptually/semantically (not just exact name matches):
 ${JSON.stringify(excludeNames)}\n`
     : '';
   const wealthNote = wealthHint ? `\n{{char}}'s established financial/housing context (for wealth-level consistency on any pricier item): ${wealthHint}\n` : '';
+  const isRealWorldCurrency = worldClass?.category === 'REALISTIC' || worldClass?.category === 'HISTORICAL' || worldClass?.category === 'MAJOR_IP';
+  const countryNote = countryHint
+    ? `\n⚠ This character's home country/region is already locked in: "${countryHint}". If the
+"brand" field references a real-world brand, or if "tmi" mentions any price/monetary amount,
+both MUST stay consistent with that locked-in country: ${isRealWorldCurrency
+      ? `use a brand that actually makes sense for that country (don't default to a Korean
+brand just because you're writing in Korean), and any amount mentioned must use that
+country's real currency, written as a SYMBOL ($, £, €, ¥, etc.) if one commonly exists or its
+3-letter ISO code if it doesn't — never spell it out as a word, and never default to Korean
+won unless the locked-in country is actually Korea.`
+      : `use this world's own invented brand/currency conventions consistently, not a
+real-world country's brand or currency.`}\n`
+    : '';
   const profileNote = profileContext ? `\n${profileContext}\n` : '';
   const triggerHistoryNote = recentTriggerNote ? `\n${recentTriggerNote}\n` : '';
   return `
@@ -585,7 +598,7 @@ ${BREAK_CHARACTER_GUARD}
 ${langInstruction(lang)}
 
 World classification result: ${JSON.stringify(worldClass)}
-${profileNote}${wealthNote}${excludeNote}${triggerHistoryNote}
+${profileNote}${wealthNote}${countryNote}${excludeNote}${triggerHistoryNote}
 The most recent exchange in the roleplay (read-only context, do not narrate or continue it):
 """
 ${lastExchangeText}
