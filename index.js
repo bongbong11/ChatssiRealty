@@ -494,13 +494,16 @@ async function classifyWorld(userHint) {
 }
 async function generateHouse(userHint, isMove) {
     const lang = getSettings().outputLanguage || 'ko';
-    const worldClass = await classifyWorld(userHint);
+    const charKey = getCharKey();
     const data = getCharData();
+    const worldClass = await classifyWorld(userHint);
+    if (getCharKey() !== charKey) return null;
     const hasCachedProfile = !!getCachedProfileSummary();
     const prompt = isMove
         ? buildHouseMovePrompt('', worldClass, data.house.current, lang, hasCachedProfile)
         : buildAddressGeneratePrompt('', worldClass, userHint, lang, hasCachedProfile);
     const card = parseJSON(await callAI(prompt));
+    if (getCharKey() !== charKey) return null;
     if (!card) return null;
     card._worldClass = worldClass;
     card._wealthTier = card.wealthTier || 'middle'; // 숨겨진 재산등급 — 어떤 카드 UI에도 안 보임
@@ -812,13 +815,34 @@ async function checkForHiddenItemDiscovery(force = false) {
     } catch (e) { console.warn(`[${MODULE_NAME}] 발견 체크 실패:`, e.message); }
 }
 
-// ─── 로딩 표시 (챗씨부인 방식 재사용) ───────
-function showLoading(targetId, msg) {
-    const el = document.getElementById(targetId);
-    if (!el) return;
-    el.innerHTML = `<div style="text-align:center;padding:24px;color:${DEED.gold};font-size:12px">
-        <span class="csr-spin" style="display:inline-block;animation:csr-spin 1s linear infinite">🔄</span> ${esc(msg)}
+// 탭을 옮겼다가 돌아와도 로딩 상태를 표시하고 같은 캐릭터의 중복 요청을 막는다.
+const houseLoadingByChar = new Map();
+function houseLoadingMarkup(msg) {
+    return `<div class="csr-house-loading" role="status" aria-live="polite">
+        <div class="csr-road-scene" aria-hidden="true">
+            <div class="csr-moving-truck">
+                <svg viewBox="0 0 128 70" width="128" height="70" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="9" y="28" width="76" height="26" rx="4" fill="#2B3A55"/>
+                    <rect x="15" y="15" width="22" height="14" rx="2" fill="#E8C477" stroke="#9A762C" stroke-width="1.5"/>
+                    <path d="M26 15v14" stroke="#9A762C" stroke-width="1.5"/>
+                    <rect x="40" y="10" width="22" height="19" rx="2" fill="#F5DFA9" stroke="#9A762C" stroke-width="1.5"/>
+                    <path d="M51 10v19" stroke="#9A762C" stroke-width="1.5"/>
+                    <rect x="65" y="18" width="15" height="11" rx="2" fill="#D9B66B" stroke="#9A762C" stroke-width="1.5"/>
+                    <path d="M85 31h21l13 14v9H85z" fill="#B33A3A"/>
+                    <path d="M93 35h11l8 9H93z" fill="#F7F3EA"/>
+                    <rect x="116" y="47" width="5" height="4" rx="1" fill="#E8C477"/>
+                    <circle cx="29" cy="55" r="9" fill="#233047"/><circle cx="29" cy="55" r="4" fill="#D8D2C2"/>
+                    <circle cx="99" cy="55" r="9" fill="#233047"/><circle cx="99" cy="55" r="4" fill="#D8D2C2"/>
+                </svg>
+            </div>
+            <div class="csr-moving-road"></div>
+        </div>
+        <div class="csr-house-loading-label">${esc(msg)}</div>
     </div>`;
+}
+function showLoading(targetId, msg) {
+    houseLoadingByChar.set(getCharKey(), msg);
+    setInnerHTML(targetId, houseLoadingMarkup(msg));
 }
 
 // ─── 렌더링: 거주지 카드 ────────────────────
@@ -984,14 +1008,15 @@ function renderFoodList(subtype) {
 // ─── 렌더링: 탭 본문 ────────────────────────
 function renderHouseTab() {
     const hasHouse = !!getCharData().house.current;
+    const loadingMessage = houseLoadingByChar.get(getCharKey());
     return `
     <div style="padding:14px">
         <div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">
             ${WORLD_CATS.map((c) => `<div class="csr-cat-chip" data-cat="${esc(c)}" style="flex:none;padding:7px 12px;border-radius:999px;background:${c === state.currentCategory ? DEED.ink : '#fff'};color:${c === state.currentCategory ? DEED.bg : DEED.ink};border:1px solid ${DEED.line};font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">${esc(c)}</div>`).join('')}
         </div>
         <input id="csr-ref-input" style="width:100%;border:1px solid ${DEED.line};background:#fff;border-radius:10px;padding:10px 12px;font-size:12px;color:${DEED.ink};margin-bottom:10px;box-sizing:border-box" placeholder="예: 뉴욕 맨하탄 · 조선 한성 · 해리포터-런던 · 비워두면 자동">
-        ${!hasHouse ? `<button id="csr-generate-btn" style="width:100%;padding:12px;border:none;border-radius:12px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:13px;cursor:pointer;margin-bottom:16px">집 생성하기</button>` : ''}
-        <div id="csr-deed-container">${renderDeed()}</div>
+        ${!hasHouse ? `<button id="csr-generate-btn" ${loadingMessage ? 'disabled' : ''} style="width:100%;padding:12px;border:none;border-radius:12px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:13px;cursor:pointer;margin-bottom:16px">집 생성하기</button>` : ''}
+        <div id="csr-deed-container">${loadingMessage ? houseLoadingMarkup(loadingMessage) : renderDeed()}</div>
     </div>`;
 }
 function renderItemsTab() {
@@ -1422,31 +1447,37 @@ function bindHouseTab() {
     }));
     document.getElementById('csr-generate-btn')?.addEventListener('click', async (e) => {
         const btn = e.currentTarget;
-        if (btn.disabled) return;
+        const charKey = getCharKey();
+        if (btn.disabled || houseLoadingByChar.has(charKey)) return;
         btn.disabled = true;
         const hint = document.getElementById('csr-ref-input')?.value || '';
-        showLoading('csr-deed-container', '그남의 집이 알아보는 중...');
+        showLoading('csr-deed-container', '짐을 싣고 새 집으로 가는 중...');
         try {
             const card = await generateHouse(hint, false);
-            if (!card) toastr.error('생성에 실패했어요 (AI 응답을 JSON으로 해석하지 못함). 다시 시도하거나 콘솔(F12) 로그를 확인해보세요.');
+            if (!card && getCharKey() === charKey) toastr.error('생성에 실패했어요 (AI 응답을 JSON으로 해석하지 못함). 다시 시도하거나 콘솔(F12) 로그를 확인해보세요.');
         } catch (e) { toastr.error(`생성 실패: ${e.message}`); }
-        // 집이 새로 생겼으면 "집 생성하기" 버튼이 사라져야 하니 전체 탭을 다시 그림
-        setInnerHTML('csr-content', renderHouseTab());
-        bindHouseTab();
+        finally {
+            houseLoadingByChar.delete(charKey);
+            if (state.isPanelOpen && state.currentTab === 'house' && getCharKey() === charKey) renderBody();
+        }
     });
     bindDeedButtons();
 }
 function bindDeedButtons() {
     document.getElementById('csr-move-btn')?.addEventListener('click', async () => {
+        const charKey = getCharKey();
+        if (houseLoadingByChar.has(charKey)) return;
         const hint = document.getElementById('csr-ref-input')?.value || '';
-        showLoading('csr-deed-container', '이사 중...');
+        showLoading('csr-deed-container', '새 거처로 이사 가는 중...');
         try {
             const card = await generateHouse(hint, true);
             if (card) toastr.success('이사 완료!');
-            else toastr.error('이사 실패 (AI 응답을 JSON으로 해석하지 못함). 다시 시도해보세요.');
+            else if (getCharKey() === charKey) toastr.error('이사 실패 (AI 응답을 JSON으로 해석하지 못함). 다시 시도해보세요.');
         } catch (e) { toastr.error(`이사 실패: ${e.message}`); }
-        setInnerHTML('csr-deed-container', renderDeed());
-        bindDeedButtons();
+        finally {
+            houseLoadingByChar.delete(charKey);
+            if (state.isPanelOpen && state.currentTab === 'house' && getCharKey() === charKey) renderBody();
+        }
     });
     document.getElementById('csr-lore-btn')?.addEventListener('click', async () => {
         if (!getCharData().house.current) { toastr.warning('먼저 집을 생성해주세요.'); return; }
@@ -1594,8 +1625,15 @@ function injectCSS() {
     if (document.getElementById('csr-styles')) return;
     const s = document.createElement('style');
     s.id = 'csr-styles';
-    s.textContent = `@keyframes csr-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-@keyframes csr-box-shake{0%,100%{transform:rotate(0deg)}15%{transform:rotate(-8deg)}30%{transform:rotate(8deg)}45%{transform:rotate(-8deg)}60%{transform:rotate(8deg)}75%{transform:rotate(-4deg)}90%{transform:rotate(4deg)}}`;
+    s.textContent = `@keyframes csr-box-shake{0%,100%{transform:rotate(0deg)}15%{transform:rotate(-8deg)}30%{transform:rotate(8deg)}45%{transform:rotate(-8deg)}60%{transform:rotate(8deg)}75%{transform:rotate(-4deg)}90%{transform:rotate(4deg)}}
+@keyframes csr-truck-drive{0%,8%{left:-130px}88%,100%{left:100%}}
+.csr-house-loading{background:${DEED.bgCard};border:1px solid ${DEED.line};border-radius:14px;padding:18px 16px 20px;text-align:center;overflow:hidden}
+.csr-road-scene{height:78px;position:relative;overflow:hidden;max-width:290px;margin:0 auto 10px}
+.csr-moving-truck{position:absolute;left:-130px;bottom:6px;width:128px;height:70px;animation:csr-truck-drive 3.6s linear infinite}
+.csr-moving-road{position:absolute;left:0;right:0;bottom:12px;border-bottom:3px solid ${DEED.ink}}
+.csr-moving-road::after{content:'';display:block;border-bottom:2px dashed ${DEED.line};position:absolute;left:0;right:0;top:8px}
+.csr-house-loading-label{color:${DEED.ink};font-size:12px;font-weight:800}
+@media (prefers-reduced-motion: reduce){.csr-moving-truck{left:50%;transform:translateX(-50%);animation:none}}`;
     document.head.appendChild(s);
 }
 
