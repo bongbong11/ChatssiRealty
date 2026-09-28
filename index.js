@@ -17,6 +17,7 @@ import {
     buildItemInjectionText,
     buildFoodBundleInjectionText,
 } from './prompts.js';
+import { rememberItems, planBatch, selectUnique, finalizeBatch } from './generation.js';
 
 const MODULE_NAME = 'chatssi_realestate';
 const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인됨)
@@ -372,7 +373,9 @@ async function fetchLorebookText(maxLen = 8000) {
 // data.characterProfileSummary로 캐싱해두고, 이후엔 그걸 재사용 (매번 풀로 다시 안 읽음).
 // 챗히스토리/로어북만 매턴 새로 읽으면 됨 (서사 따라 계속 쌓이니까).
 function getCachedProfileSummary() {
-    return getCharData().characterProfileSummary || '';
+    const data = getCharData();
+    // Version 1 summaries may contain a relationship state that has since changed.
+    return data.profileSummaryVersion === 2 ? (data.characterProfileSummary || '') : '';
 }
 // 프로필 선택 시: 직접 모은 컨텍스트(캐시 요약/캐릭터시트+페르소나, 로어북, 최근 챗) + 프롬프트를
 // ConnectionManager로 전송. 프로필 미선택 시: generateQuietPrompt로 ST가 로어북/AN/챗을 자동으로
@@ -493,7 +496,7 @@ async function generateHouse(userHint, isMove) {
     const lang = getSettings().outputLanguage || 'ko';
     const worldClass = await classifyWorld(userHint);
     const data = getCharData();
-    const hasCachedProfile = !!data.characterProfileSummary;
+    const hasCachedProfile = !!getCachedProfileSummary();
     const prompt = isMove
         ? buildHouseMovePrompt('', worldClass, data.house.current, lang, hasCachedProfile)
         : buildAddressGeneratePrompt('', worldClass, userHint, lang, hasCachedProfile);
@@ -502,9 +505,10 @@ async function generateHouse(userHint, isMove) {
     card._worldClass = worldClass;
     card._wealthTier = card.wealthTier || 'middle'; // 숨겨진 재산등급 — 어떤 카드 UI에도 안 보임
     delete card.wealthTier; // 보이는 필드에서는 제거
-    if (card.characterProfileSummary && !data.characterProfileSummary) {
-        // 최초 1회만 캐싱 — 이미 있으면 덮어쓰지 않음 (압축본을 또 압축하면 정보가 점점 손실될 위험)
+    if (card.characterProfileSummary && !hasCachedProfile) {
+        // Legacy summaries included transient relationship state; replace them once.
         data.characterProfileSummary = card.characterProfileSummary;
+        data.profileSummaryVersion = 2;
     }
     delete card.characterProfileSummary; // 보이는 필드에서는 제거
     if (data.house.current) data.house.history.unshift(data.house.current);
@@ -602,29 +606,33 @@ async function generateItemPool(spaceKey, isReroll = false) {
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
     const existing = data.spaces[spaceKey];
     const pinned = (isReroll && existing && !existing.empty) ? existing.items.filter((it) => it.pinned) : [];
-    // 중복 방지용 — 저장은 안 하고 이번 생성 호출에만 참고시킴. 이 공간 안의 아이템뿐 아니라
-    // 비밀수집/발견함 큐까지 포함해서 양방향 중복방지 (gatherAllItemNames가 전부 모아줌)
-    const existingNames = [...new Set([
-        ...((existing && !existing.empty) ? existing.items.map((it) => it.name).filter(Boolean) : []),
-        ...gatherAllItemNames(),
-    ])];
-    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, brand: it.brand })), existingNames, countryHint: data.house.current?.location || '' };
+    const plan = planBatch(ITEM_CAP, pinned, 4 + Math.floor(Math.random() * 3));
+    if (!plan.count) return existing;
+    const excludedItems = [
+        ...((existing && !existing.empty) ? existing.items : []),
+        ...gatherAllItems(),
+        ...(data.generationHistory || []),
+    ];
+    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, conceptKey: it.conceptKey, unlockCost: it.unlockCost })),
+        excludedItems: excludedItems.map((it) => ({ name: it.name, conceptKey: it.conceptKey })).slice(-120),
+        count: plan.count, specialCount: plan.specialCount, countryHint: data.house.current?.location || '' };
 
     const result = parseJSON(await callAI(buildItemPoolPrompt('', worldClass, spaceKey, displayLabel, lang, opts)));
     if (!result) return null;
+    if (result.empty && pinned.length) return existing;
 
-    if (result.empty) {
+    if (result.empty && !pinned.length) {
         data.spaces[spaceKey] = { empty: true, emptyReason: result.emptyReason };
     } else {
-        const pinnedNames = new Set(pinned.map((it) => it.name));
-        const newItems = (result.items || [])
-            .filter((it) => !pinnedNames.has(it.name)) // AI가 핀 아이템과 똑같은 이름으로 또 만들어버리는 경우 대비 안전망
+        const newItems = finalizeBatch(selectUnique(result.items, excludedItems, plan.count), plan.specialCount)
             .map((it) => {
                 const unlockCost = it.unlockCost || 0;
                 return { ...it, id: uid(), unlockCost, unlocked: unlockCost === 0, pinned: false, injected: false, createdAt: Date.now() };
             });
-        const finalItems = isReroll ? [...pinned, ...newItems].slice(0, ITEM_CAP) : newItems.slice(0, ITEM_CAP);
+        if (isReroll && !newItems.length) return existing;
+        const finalItems = isReroll ? [...pinned, ...newItems].slice(0, ITEM_CAP) : newItems;
         data.spaces[spaceKey] = { empty: false, items: finalItems };
+        rememberItems(data, newItems);
     }
     save();
     return data.spaces[spaceKey];
@@ -650,23 +658,31 @@ async function generateFoodList(subtype, isReroll = false) {
     const worldClass = data.house.current?._worldClass || (await classifyWorld(''));
     const existing = data[subtype];
     const pinned = (isReroll && existing && !existing.empty) ? existing.list.filter((it) => it.pinned) : [];
-    const existingNames = [...new Set([
-        ...((existing && !existing.empty) ? existing.list.map((it) => it.name).filter(Boolean) : []),
-        ...gatherAllItemNames(),
-    ])];
-    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name })), existingNames };
+    const plan = planBatch(10, pinned, 2 + Math.floor(Math.random() * 2));
+    if (!plan.count) return existing; // Keep legacy over-cap pins intact.
+    const excludedItems = [
+        ...((existing && !existing.empty) ? existing.list : []),
+        ...gatherAllItems(),
+        ...(data.generationHistory || []),
+    ];
+    const opts = { isReroll, pinnedItems: pinned.map((it) => ({ name: it.name, conceptKey: it.conceptKey, unlockCost: it.unlockCost })),
+        excludedItems: excludedItems.map((it) => ({ name: it.name, conceptKey: it.conceptKey })).slice(-120),
+        count: plan.count, specialCount: plan.specialCount, countryHint: data.house.current?.location || '' };
 
     const result = parseJSON(await callAI(buildFoodListPrompt('', worldClass, subtype, lang, opts)));
     if (!result) return null;
+    if (result.empty && pinned.length) return existing;
 
-    if (result.empty) {
+    if (result.empty && !pinned.length) {
         data[subtype] = { empty: true };
     } else {
-        const newList = (result.list || []).map((it) => {
+        const newList = finalizeBatch(selectUnique(result.list, excludedItems, plan.count), plan.specialCount, true).map((it) => {
             const unlockCost = it.unlockCost || 0;
             return { ...it, id: uid(), unlockCost, unlocked: unlockCost === 0, pinned: false, injected: false };
         });
+        if (isReroll && !newList.length) return existing;
         data[subtype] = { empty: false, list: isReroll ? [...pinned, ...newList] : newList };
+        rememberItems(data, newList);
     }
     save();
     return data[subtype];
@@ -703,20 +719,20 @@ function toggleFoodBundleInjection(subtype) {
 
 // ─── 🎁 발견 기능 (역주입 — 채팅에서 정보를 읽어와 UI로 가져옴) ───────
 // 탭2 전체(방+펜트리/냉장고) + 비밀수집 + 현재 발견함 큐 — 중복 방지용 양방향 제외 목록
-function gatherAllItemNames() {
+function gatherAllItems() {
     const data = getCharData();
-    const names = [];
+    const items = [];
     for (const slot of Object.values(data.spaces || {})) {
         if (slot?.empty) continue;
-        for (const it of slot?.items || []) if (it.name) names.push(it.name);
+        for (const it of slot?.items || []) if (it.name) items.push(it);
     }
     for (const subtype of ['pantry', 'fridge']) {
         const slot = data[subtype];
-        if (slot && !slot.empty) for (const it of slot.list || []) if (it.name) names.push(it.name);
+        if (slot && !slot.empty) for (const it of slot.list || []) if (it.name) items.push(it);
     }
-    for (const it of data.secretCollection?.list || []) if (it.name) names.push(it.name);
-    for (const it of data.discovery?.queue || []) if (it.name) names.push(it.name);
-    return names;
+    for (const it of data.secretCollection?.list || []) if (it.name) items.push(it);
+    for (const it of data.discovery?.queue || []) if (it.name) items.push(it);
+    return items;
 }
 async function checkForHiddenItemDiscovery(force = false) {
     try {
@@ -744,14 +760,18 @@ async function checkForHiddenItemDiscovery(force = false) {
         const charName = ctx.characters?.[ctx.characterId]?.name || 'AI';
         const recentText = (ctx.chat || []).slice(-DISCOVERY_READ_COUNT)
             .map((m) => `${m.is_user ? (ctx.name1 || '유저') : charName}: ${m.mes}`).join('\n');
-        const excludeNames = gatherAllItemNames();
+        const excludeNames = [...gatherAllItems(), ...(data.generationHistory || [])]
+            .slice(-120).map((it) => ({ name: it.name, conceptKey: it.conceptKey }));
         // 탭1 집 생성 시 같이 뽑아둔 숨겨진 재산등급(_wealthTier) — 유저에게는 안 보이는 정보,
         // 비싼 아이템 생성 시 일관성 체크용으로만 내부적으로 사용
         const houseCard = data.house.current;
         const wealthHint = houseCard?._wealthTier ? `wealthTier=${houseCard._wealthTier}` : '';
         // 캐릭터/페르소나는 캐싱된 압축 요약 재사용(풀로 다시 안 읽음), 로어북은 서사 따라 계속
         // 쌓이니까 매턴 새로 읽음 — chatHistoryCount 설정과 무관하게 이 체크 전용으로 가볍게
-        const profileSummary = getCachedProfileSummary();
+        const profileSummary = getCachedProfileSummary() || [
+            ctx.characters?.[ctx.characterId]?.description,
+            ctx.characters?.[ctx.characterId]?.personality,
+        ].filter(Boolean).join('\n').slice(0, 3000);
         const lorebookText = await fetchLorebookText(4000);
         const profileContext = [
             profileSummary ? `[캐릭터/페르소나 요약 (캐시됨)]\n${profileSummary}` : '',
@@ -777,9 +797,11 @@ async function checkForHiddenItemDiscovery(force = false) {
             return;
         }
 
-        const item = { id: uid(), emoji: result.emoji || '🎁', name: result.name || '', brand: result.brand || '', tmi: result.tmi || '', foundAt: Date.now() };
+        if (!selectUnique([result], [...gatherAllItems(), ...(data.generationHistory || [])], 1).length) return;
+        const item = { id: uid(), emoji: result.emoji || '🎁', name: result.name || '', conceptKey: result.conceptKey || '', brand: result.brand || '', tmi: result.tmi || '', foundAt: Date.now() };
         if (data.discovery.queue.length >= DISCOVERY_QUEUE_CAP) data.discovery.queue.shift(); // 12개 꽉 차면 가장 오래된 것부터 FIFO 제거
         data.discovery.queue.push(item);
+        rememberItems(data, [item]);
         data.discovery.cooldownTurns = DISCOVERY_COOLDOWN_TURNS; // 트리거 직후 하드 쿨다운
         data.discovery.turnsSinceLastTrigger = 0;
         data.discovery.lastTriggerSummary = `${item.name} — ${(item.tmi || '').slice(0, 100)}`;
@@ -1732,11 +1754,11 @@ function bindSettingsTabInner() {
             // 이해를 위한 메타정보인 캐시는 유지 — 다시 풀로 안 읽어도 되게)
             const preservedSummaries = {};
             for (const [key, charData] of Object.entries(s.perChar || {})) {
-                if (charData?.characterProfileSummary) preservedSummaries[key] = charData.characterProfileSummary;
+                if (charData?.profileSummaryVersion === 2 && charData.characterProfileSummary) preservedSummaries[key] = charData.characterProfileSummary;
             }
             s.perChar = {};
             for (const [key, summary] of Object.entries(preservedSummaries)) {
-                s.perChar[key] = { house: { current: null, history: [] }, spaces: {}, pantry: null, fridge: null, discovery: { queue: [] }, secretCollection: { list: [] }, characterProfileSummary: summary, updatedAt: Date.now() };
+                s.perChar[key] = { house: { current: null, history: [] }, spaces: {}, pantry: null, fridge: null, discovery: { queue: [] }, secretCollection: { list: [] }, characterProfileSummary: summary, profileSummaryVersion: 2, updatedAt: Date.now() };
             }
             save();
             toastr.success('데이터 초기화 완료 (포인트·캐시는 유지됨)');
