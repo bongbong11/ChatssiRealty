@@ -24,7 +24,6 @@ const CHATLEROYAL_KEY = 'chatl_royal'; // 챗틀로얄 실제 모듈명 (확인�
 const BASE_POINTS = 1000;
 const REFILL_INTERVAL_MS = 1 * 60 * 60 * 1000; // 1시간
 const REFILL_AMOUNT = 10;
-const ROULETTE_COOLDOWN_MS = 1 * 60 * 60 * 1000; // 1시간마다 한 번
 // 보상이 클수록 당첨 확률(weight)은 낮아짐 — 합 100 기준 비중
 const ROULETTE_OUTCOMES = [
     { key: 'lose', label: '꽝', pct: -100, weight: 15, color: '#5b5650' },
@@ -69,7 +68,6 @@ const defaultSettings = {
     selectedProfileName: null,
     maxTokens: 4000,
     outputLanguage: 'ko', // 'ko' | 'en'
-    rouletteLastSpinAt: 0,
     chatHistoryCount: 30, // buildManualContext에서 가져올 최근 채팅 메시지 개수
     discoveryEnabled: false, // 🎁 발견 기능 — 매턴 토큰 나가니까 기본 OFF, 원하는 사람만 켜기
     perChar: {}, // { [charKey]: { house:{current,history}, spaces:{key:[..]}, pantry:[], fridge:[] } }
@@ -309,18 +307,40 @@ function syncChatleRoyalPoints() {
     return amount;
 }
 
+// Only accept achievements sent by the installed MINIGAME iframe. Award values live here,
+// so a game message cannot choose an arbitrary point amount.
+const MINIGAME_REWARDS = {
+    solitaire: { achievement: 'complete', points: 20, label: '솔리테어 완성' },
+    slide: { achievement: 'complete', points: 10, label: '슬라이드 퍼즐 완성' },
+    match: { achievement: 'complete', points: 15, label: '매치3 목표 달성' },
+    sudoku: { achievement: 'complete', points: 25, label: '스도쿠 완성' },
+    snake: { achievement: 'score', points: 5, label: '스네이크 점수 보상' },
+    brick: { achievement: 'score', points: 5, label: '벽돌깨기 점수 보상' },
+};
+const rewardedMinigameEvents = new Set();
+let minigameRewardListenerRegistered = false;
+function handleMinigameReward(event) {
+    const frame = document.querySelector('#st-mini-games-overlay iframe');
+    if (!frame || event.source !== frame.contentWindow || event.origin !== window.location.origin) return;
+    const { source, type, version, game, achievement, eventId } = event.data || {};
+    const reward = MINIGAME_REWARDS[game];
+    if (source !== 'st-mini-games' || type !== 'reward' || version !== 1 ||
+        !reward || reward.achievement !== achievement || typeof eventId !== 'string' ||
+        !eventId || eventId.length > 100 || rewardedMinigameEvents.has(eventId)) return;
+    rewardedMinigameEvents.add(eventId);
+    if (rewardedMinigameEvents.size > 200) rewardedMinigameEvents.delete(rewardedMinigameEvents.values().next().value);
+    checkRefill();
+    const settings = getSettings();
+    settings.points += reward.points;
+    settings.lifetimePoints += reward.points;
+    save();
+    refreshHeaderPoints();
+    frame.contentWindow.postMessage({ source: 'chatssi-realty', type: 'reward-credited',
+        eventId, points: reward.points, label: reward.label }, window.location.origin);
+    toastr.success(`🎮 ${reward.label}! +${reward.points}P`);
+}
+
 // ─── 룰렛(도박성 베팅) ───────────────────────
-function getRouletteCooldownRemaining() {
-    const s = getSettings();
-    const next = (s.rouletteLastSpinAt || 0) + ROULETTE_COOLDOWN_MS;
-    return Math.max(0, next - Date.now());
-}
-function formatCooldown(ms) {
-    const totalMin = Math.ceil(ms / 60000);
-    const h = Math.floor(totalMin / 60);
-    const m = totalMin % 60;
-    return h > 0 ? `${h}시간 ${m}분` : `${m}분`;
-}
 function pickRouletteOutcome() {
     const total = ROULETTE_OUTCOMES.reduce((sum, o) => sum + o.weight, 0);
     let r = Math.random() * total;
@@ -333,9 +353,6 @@ function pickRouletteOutcome() {
 // bet: 자체 보유 포인트(s.points) 기준 — 챗틀로얄에서 동기화 안 한 포인트는 베팅 대상 아님
 function spinRoulette(bet) {
     const s = getSettings();
-    if (getRouletteCooldownRemaining() > 0) {
-        return { error: `아직 쿨다운 중이에요 (${formatCooldown(getRouletteCooldownRemaining())} 남음)` };
-    }
     bet = Math.floor(bet);
     if (!Number.isFinite(bet) || bet <= 0) return { error: '베팅 금액을 입력해주세요' };
     if (bet > s.points) return { error: `자체 보유 포인트(${s.points}P)보다 많이 베팅할 수 없어요` };
@@ -348,7 +365,6 @@ function spinRoulette(bet) {
         s.points += gain;
         s.lifetimePoints += gain;
     }
-    s.rouletteLastSpinAt = Date.now();
     save();
     return { outcome, bet, newPoints: s.points };
 }
@@ -1353,8 +1369,7 @@ function getOutcomeMidAngle(key) {
 function showRoulettePopup() {
     document.getElementById('csr-roulette-popup')?.remove();
     const s = getSettings();
-    const cooldownMs = getRouletteCooldownRemaining();
-    const onCooldown = cooldownMs > 0;
+    const hasMinigame = typeof window.stMiniGamesOpen === 'function';
 
     // 챗틀로얄/아이템모달 방식과 동일: flex 중앙정렬+inset:0 대신 창 크기 기준 top/left를 미리 계산해서
     // 고정 배치 — 모바일에서 숫자 입력창에 키보드가 뜨며 뷰포트가 바뀌어도 모달이 위로 솟구쳐서
@@ -1369,7 +1384,7 @@ function showRoulettePopup() {
     modal.innerHTML = `
         <button id="csr-roulette-close" style="position:absolute;top:10px;right:12px;border:none;background:none;font-size:14px;color:${DEED.ink};opacity:.6;cursor:pointer">✕</button>
         <h3 style="font-family:'Georgia',serif;margin:0 0 4px;color:${DEED.ink};font-size:15px">🎰 포인트 룰렛</h3>
-        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-bottom:14px">1시간마다 1회 · 자체 보유 ${s.points}P</div>
+        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-bottom:14px">자체 보유 ${s.points}P</div>
         <div style="position:relative;width:170px;height:170px;margin:0 auto 16px">
           <div id="csr-roulette-wheel" style="width:170px;height:170px;border-radius:50%;background:${buildRouletteGradient()};border:4px solid ${DEED.ink};transition:transform 3s cubic-bezier(.17,.67,.12,.99)"></div>
           <div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:0;height:0;border-left:9px solid transparent;border-right:9px solid transparent;border-top:16px solid ${DEED.ink}"></div>
@@ -1377,16 +1392,21 @@ function showRoulettePopup() {
         <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:6px;font-size:9px;color:${DEED.ink};opacity:.75;margin-bottom:14px">
           ${ROULETTE_OUTCOMES.map((o) => `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${o.color};margin-right:2px;vertical-align:middle"></span>${o.label}</span>`).join('')}
         </div>
-        ${onCooldown
-            ? `<div style="font-size:12px;color:${DEED.ink};opacity:.7;padding:10px 0">⏳ 쿨다운 중 — ${formatCooldown(cooldownMs)} 후 가능</div>`
-            : `<div style="display:flex;gap:6px;margin-bottom:10px">
+        <div style="display:flex;gap:6px;margin-bottom:10px">
                 <input id="csr-roulette-bet" type="number" min="1" max="${s.points}" value="${Math.min(10, s.points)}" placeholder="베팅 포인트" style="flex:1;padding:8px;border:1px solid ${DEED.line};border-radius:10px;font-size:12px;text-align:center">
                 <button id="csr-roulette-spin-btn" style="padding:8px 14px;border:none;border-radius:10px;background:${DEED.ink};color:${DEED.bg};font-weight:800;font-size:12px;cursor:pointer" ${s.points <= 0 ? 'disabled' : ''}>스핀</button>
-              </div>`}
+              </div>
         <div id="csr-roulette-result" style="font-size:12px;font-weight:800;color:${DEED.ink};min-height:18px"></div>
+        ${hasMinigame ? `<button id="csr-open-minigame" style="width:100%;margin-top:12px;padding:9px;border:1px solid ${DEED.line};border-radius:10px;background:#FBF6E8;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">🎮 포인트 벌러가기</button>
+        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-top:5px">스네이크 5점·벽돌깨기 500점마다 5P · 퍼즐 완료 10~25P</div>` : ''}
     `;
     document.body.appendChild(modal);
     document.getElementById('csr-roulette-close')?.addEventListener('click', () => modal.remove());
+    document.getElementById('csr-open-minigame')?.addEventListener('click', () => {
+        modal.remove();
+        closeFloat();
+        window.stMiniGamesOpen();
+    });
 
     document.getElementById('csr-roulette-spin-btn')?.addEventListener('click', () => {
         const betInput = document.getElementById('csr-roulette-bet');
@@ -1643,7 +1663,7 @@ function createFloatingPanel() {
             <span style="font-size:16px">🏠</span>
             <div style="flex:1;font-weight:800;color:${DEED.bg};font-size:13px">그남의 집</div>
             <button id="csr-header-inject-btn" style="font-weight:700;font-size:11px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 9px;cursor:pointer">📡 0</button>
-            <button id="csr-header-roulette-btn" title="포인트 룰렛 (1시간마다 1회)" style="font-weight:700;font-size:12px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 7px;cursor:pointer">🎰</button>
+            <button id="csr-header-roulette-btn" title="포인트 룰렛" style="font-weight:700;font-size:12px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 7px;cursor:pointer">🎰</button>
             <span id="csr-header-pts" style="font-family:Georgia,serif;font-weight:700;font-size:12px;color:${DEED.gold};background:rgba(255,255,255,.1);border-radius:8px;padding:3px 9px">${getTotalPoints()} P</span>
             <button id="csr-close" style="background:none;border:1px solid ${DEED.bg}55;border-radius:4px;color:${DEED.bg};cursor:pointer;font-size:12px;padding:2px 7px">✕</button>
         </div>
@@ -1819,6 +1839,10 @@ function bindSettingsTabInner() {
 export async function onActivate() {
     console.log(`[${MODULE_NAME}] 활성화`);
     checkRefill();
+    if (!minigameRewardListenerRegistered) {
+        window.addEventListener('message', handleMinigameReward);
+        minigameRewardListenerRegistered = true;
+    }
     pruneOrphanedData();
     // 발견 기능은 서버 재시작/페이지 새로고침마다 항상 OFF로 리셋 — 매턴 추가 AI 호출이 나가는
     // 기능이라 켜놓은 걸 깜빡하고 다니면 느려지는 걸 방지. 켜고 싶으면 그 세션에서 다시 켜야 함.
