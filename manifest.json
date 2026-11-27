@@ -6,7 +6,7 @@
   "js": "index.js",
   "generate_interceptor": "csrGenerateInterceptor",
   "author": "봉봉",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "homePage": "https://github.com/bongbong11/ChatssiRealty",
   "auto_update": false
 }
