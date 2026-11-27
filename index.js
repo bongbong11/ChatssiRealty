@@ -1398,7 +1398,7 @@ function showRoulettePopup() {
               </div>
         <div id="csr-roulette-result" style="font-size:12px;font-weight:800;color:${DEED.ink};min-height:18px"></div>
         ${hasMinigame ? `<button id="csr-open-minigame" style="width:100%;margin-top:12px;padding:9px;border:1px solid ${DEED.line};border-radius:10px;background:#FBF6E8;color:${DEED.ink};font-weight:800;font-size:12px;cursor:pointer">🎮 포인트 벌러가기</button>
-        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-top:5px">스네이크 5점·벽돌깨기 500점마다 5P · 퍼즐 완료 10~25P</div>` : ''}
+        <div style="font-size:10px;color:${DEED.ink};opacity:.6;margin-top:5px">스네이크 5점·벽돌깨기 100점마다 5P · 퍼즐 완료 10~25P</div>` : ''}
     `;
     document.body.appendChild(modal);
     document.getElementById('csr-roulette-close')?.addEventListener('click', () => modal.remove());
