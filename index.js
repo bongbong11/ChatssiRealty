@@ -64,6 +64,7 @@ const CUTE = {
 const defaultSettings = {
     points: 0,
     lifetimePoints: 0,
+    pointHistory: [],
     lastRefillAt: 0,
     selectedProfileName: null,
     maxTokens: 4000,
@@ -253,15 +254,28 @@ function pruneOrphanedData() {
 }
 
 // ─── 포인트 시스템 ──────────────────────────
+function pointDay(timestamp) {
+    const date = new Date(timestamp);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+function recordPointChange(settings, delta, label, timestamp = Date.now()) {
+    if (!delta) return;
+    if (!Array.isArray(settings.pointHistory)) settings.pointHistory = [];
+    settings.pointHistory.push({ timestamp, delta, label });
+    // Keep recent entries only so frequent game rewards cannot grow settings forever.
+    const cutoff = timestamp - 30 * 24 * 60 * 60 * 1000;
+    settings.pointHistory = settings.pointHistory.filter((entry) => entry.timestamp >= cutoff).slice(-1000);
+}
 function checkRefill() {
     const s = getSettings();
     const now = Date.now();
-    if (!s.lastRefillAt) { s.lastRefillAt = now; s.points = BASE_POINTS; s.lifetimePoints = BASE_POINTS; save(); return; }
+    if (!s.lastRefillAt) { s.lastRefillAt = now; s.points = BASE_POINTS; s.lifetimePoints = BASE_POINTS; recordPointChange(s, BASE_POINTS, '시작 포인트', now); save(); return; }
     const elapsed = now - s.lastRefillAt;
     if (elapsed >= REFILL_INTERVAL_MS) {
         const cycles = Math.floor(elapsed / REFILL_INTERVAL_MS);
         s.points += REFILL_AMOUNT * cycles;
         s.lifetimePoints += REFILL_AMOUNT * cycles;
+        recordPointChange(s, REFILL_AMOUNT * cycles, cycles === 1 ? '자동 충전' : `자동 충전 (${cycles}회)`, now);
         s.lastRefillAt += REFILL_INTERVAL_MS * cycles;
         save();
     }
@@ -278,10 +292,10 @@ function getTotalPoints() {
     checkRefill();
     return getSettings().points + getChatleRoyalPoints();
 }
-function spendPoints(amount) {
+function spendPoints(amount, label = '아이템 잠금 해제') {
     checkRefill();
     const s = getSettings();
-    if (s.points >= amount) { s.points -= amount; save(); return true; }
+    if (s.points >= amount) { s.points -= amount; recordPointChange(s, -amount, label); save(); return true; }
     toastr.warning('자체 포인트가 부족해요. 챗틀로얄 포인트가 있다면 설정에서 동기화해보세요.');
     return false;
 }
@@ -301,6 +315,7 @@ function syncChatleRoyalPoints() {
     const s = getSettings();
     s.points += amount;
     s.lifetimePoints += amount;
+    recordPointChange(s, amount, '챗틀로얄 포인트 가져오기');
     cr.points = available - amount;
     save();
     toastr.success(`챗틀로얄에서 ${amount}P 가져왔어요!`);
@@ -333,6 +348,7 @@ function handleMinigameReward(event) {
     const settings = getSettings();
     settings.points += reward.points;
     settings.lifetimePoints += reward.points;
+    recordPointChange(settings, reward.points, reward.label);
     save();
     refreshHeaderPoints();
     frame.contentWindow.postMessage({ source: 'chatssi-realty', type: 'reward-credited',
@@ -360,10 +376,12 @@ function spinRoulette(bet) {
     const outcome = pickRouletteOutcome();
     if (outcome.pct < 0) {
         s.points -= bet;
+        recordPointChange(s, -bet, '룰렛 꽝');
     } else {
         const gain = Math.round(bet * outcome.pct / 100);
         s.points += gain;
         s.lifetimePoints += gain;
+        recordPointChange(s, gain, `룰렛 ${outcome.label}`);
     }
     save();
     return { outcome, bet, newPoints: s.points };
@@ -660,7 +678,7 @@ function unlockItem(spaceKey, idx) {
     const slot = getCharData().spaces[spaceKey];
     const item = slot?.items?.[idx];
     if (!item || item.unlocked) return false;
-    if (!spendPoints(item.unlockCost)) return false;
+    if (!spendPoints(item.unlockCost, `아이템 잠금 해제: ${item.name || '이름 없음'}`)) return false;
     item.unlocked = true;
     save();
     return true;
@@ -709,7 +727,7 @@ async function generateFoodList(subtype, isReroll = false) {
 function unlockFoodItem(subtype, idx) {
     const item = getCharData()[subtype]?.list?.[idx];
     if (!item || item.unlocked) return false;
-    if (!spendPoints(item.unlockCost)) return false;
+    if (!spendPoints(item.unlockCost, `음식 잠금 해제: ${item.name || '이름 없음'}`)) return false;
     item.unlocked = true;
     save();
     return true;
@@ -1277,6 +1295,30 @@ function refreshHeaderPoints() {
     const el = document.getElementById('csr-header-pts');
     if (el) el.textContent = `${getTotalPoints()} P`;
 }
+function showPointHistoryPopup() {
+    checkRefill();
+    document.getElementById('csr-point-history-popup')?.remove();
+    const settings = getSettings();
+    const today = pointDay(Date.now());
+    const entries = (Array.isArray(settings.pointHistory) ? settings.pointHistory : [])
+        .filter((entry) => entry && pointDay(entry.timestamp) === today && Number.isFinite(entry.delta))
+        .reverse();
+    const earned = entries.reduce((sum, entry) => sum + Math.max(0, entry.delta), 0);
+    const spent = entries.reduce((sum, entry) => sum + Math.max(0, -entry.delta), 0);
+    const width = Math.min(320, window.innerWidth * 0.9);
+    const popup = document.createElement('div');
+    popup.id = 'csr-point-history-popup';
+    popup.style.cssText = `position:fixed;top:${Math.max(10, window.innerHeight * 0.12)}px;left:${Math.max(10, (window.innerWidth - width) / 2)}px;width:${width}px;box-sizing:border-box;max-height:75vh;overflow-y:auto;background:${DEED.bgCard};border-radius:18px;padding:20px 16px;font-family:system-ui;z-index:10901;box-shadow:0 8px 40px rgba(0,0,0,.4);color:${DEED.ink}`;
+    popup.innerHTML = `
+        <button id="csr-point-history-close" style="position:absolute;top:10px;right:12px;border:none;background:none;font-size:14px;color:${DEED.ink};cursor:pointer">✕</button>
+        <h3 style="margin:0 0 4px;font-size:15px">오늘의 포인트 내역</h3>
+        <div style="font-size:10px;opacity:.65;margin-bottom:12px">${today} · 그남의 집 자체 포인트 ${settings.points}P</div>
+        <div style="display:flex;gap:8px;font-size:12px;font-weight:800;margin-bottom:14px"><span style="flex:1;color:#2e8b57">적립 +${earned}P</span><span style="flex:1;color:#c0392b">사용 -${spent}P</span><span style="flex:1">합계 ${earned - spent >= 0 ? '+' : ''}${earned - spent}P</span></div>
+        ${entries.length ? entries.map((entry) => `<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid ${DEED.line};font-size:11px"><span style="min-width:0;overflow-wrap:anywhere">${esc(entry.label)} <span style="opacity:.55">${new Date(entry.timestamp).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span></span><b style="white-space:nowrap;color:${entry.delta > 0 ? '#2e8b57' : '#c0392b'}">${entry.delta > 0 ? '+' : ''}${entry.delta}P</b></div>`).join('') : '<div style="font-size:11px;opacity:.65;padding:8px 0">오늘 기록된 포인트 변동이 없어요.</div>'}
+        <div style="font-size:10px;opacity:.55;margin-top:12px">이 기능을 설치한 뒤의 변동부터 기록됩니다. 챗틀로얄 포인트는 가져올 때 기록돼요.</div>`;
+    document.body.appendChild(popup);
+    popup.querySelector('#csr-point-history-close')?.addEventListener('click', () => popup.remove());
+}
 
 // ─── 주입 현황 요약 ──────────────────────────
 function getActiveInjections() {
@@ -1664,7 +1706,7 @@ function createFloatingPanel() {
             <div style="flex:1;font-weight:800;color:${DEED.bg};font-size:13px">그남의 집</div>
             <button id="csr-header-inject-btn" style="font-weight:700;font-size:11px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 9px;cursor:pointer">📡 0</button>
             <button id="csr-header-roulette-btn" title="포인트 룰렛" style="font-weight:700;font-size:12px;color:${DEED.bg};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 7px;cursor:pointer">🎰</button>
-            <span id="csr-header-pts" style="font-family:Georgia,serif;font-weight:700;font-size:12px;color:${DEED.gold};background:rgba(255,255,255,.1);border-radius:8px;padding:3px 9px">${getTotalPoints()} P</span>
+            <button id="csr-header-pts" title="오늘의 포인트 내역" style="font-family:Georgia,serif;font-weight:700;font-size:12px;color:${DEED.gold};background:rgba(255,255,255,.1);border:none;border-radius:8px;padding:3px 9px;cursor:pointer">${getTotalPoints()} P</button>
             <button id="csr-close" style="background:none;border:1px solid ${DEED.bg}55;border-radius:4px;color:${DEED.bg};cursor:pointer;font-size:12px;padding:2px 7px">✕</button>
         </div>
         <div id="csr-tabs" style="display:flex;border-bottom:1px solid ${DEED.line};flex-shrink:0">
@@ -1688,6 +1730,7 @@ function openFloat() {
     document.getElementById('csr-close')?.addEventListener('click', closeFloat);
     document.getElementById('csr-header-inject-btn')?.addEventListener('click', showInjectionSummaryPanel);
     document.getElementById('csr-header-roulette-btn')?.addEventListener('click', showRoulettePopup);
+    document.getElementById('csr-header-pts')?.addEventListener('click', showPointHistoryPopup);
     panel.querySelectorAll('.csr-tab-btn').forEach((btn) => btn.addEventListener('click', () => {
         state.currentTab = btn.dataset.tab;
         panel.querySelectorAll('.csr-tab-btn').forEach((b) => {
@@ -1707,6 +1750,7 @@ function openFloat() {
 }
 function closeFloat() {
     document.getElementById('csr-float')?.remove();
+    document.getElementById('csr-point-history-popup')?.remove();
     state.isPanelOpen = false;
     if (_headerPointsInterval) { clearInterval(_headerPointsInterval); _headerPointsInterval = null; }
 }
